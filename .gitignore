@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Node / Vite
+node_modules/
+dist/
+.vite/
+
+# Environment and local tooling
+.env
+.env.*
+!.env.example
+.idea/
+.vscode/
+
+# Generated products and runtime data (directories are retained with .gitkeep)
+generated_projects/*
+!generated_projects/.gitkeep
+knowledge/chroma_data/
+postgres_data/
+redis_data/
+
+# Logs and artifacts
+*.log
+artifacts/

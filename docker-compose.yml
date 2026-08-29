@@ -1,0 +1,5 @@
+# Deployment composition boundary for SEAM.
+# Services are intentionally not enabled during the foundation stage. Future work
+# will add version-pinned platform, PostgreSQL, Redis, and ChromaDB services here.
+name: seam
+services: {}

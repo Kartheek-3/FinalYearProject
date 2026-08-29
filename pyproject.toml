@@ -1,0 +1,16 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "seam-platform"
+version = "0.1.0"
+description = "SEAM software-factory platform"
+requires-python = ">=3.11"
+dependencies = [
+  "pydantic>=2.7,<3",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["backend"]
+
