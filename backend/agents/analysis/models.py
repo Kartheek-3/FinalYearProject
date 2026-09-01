@@ -87,8 +87,8 @@ class Ambiguity(ContractModel):
 
 class AcceptanceCriterion(ContractModel):
     id: Identifier
-    requirement_id: Identifier
-    criterion: NonEmptyText
+    requirement_id: Identifier = "unknown"
+    criterion: NonEmptyText = "Unknown criterion"
 
 
 class StructuredRequirements(ContractModel):

@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "aevum": {
+      "command": "node",
+      "args": [
+        "c:\\Users\\KARTHIK\\.antigravity-ide\\extensions\\i2flabs.aevum-1.7.0-universal\\dist\\mcp\\sse_proxy.js",
+        "http://127.0.0.1:3344/sse"
+      ]
+    }
+  }
+}

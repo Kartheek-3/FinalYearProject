@@ -62,8 +62,12 @@ class AnalysisAgent:
                 output_schema=StructuredRequirements.model_json_schema(),
             )
         except LLMInvocationError as exc:
+            import traceback
+            traceback.print_exc()
             raise AnalysisProviderError("The configured LLM failed to analyze the request.") from exc
         except Exception as exc:
+            import traceback
+            traceback.print_exc()
             raise AnalysisProviderError("Unexpected failure while invoking the configured LLM.") from exc
 
         if not isinstance(response, Mapping):
@@ -75,6 +79,9 @@ class AnalysisAgent:
         try:
             return StructuredRequirements.model_validate(response)
         except ValidationError as exc:
+            import traceback
+            traceback.print_exc()
+            print("RAW JSON:", response)
             raise AnalysisResponseValidationError(
                 "LLM response does not satisfy the Analysis Agent output contract."
             ) from exc

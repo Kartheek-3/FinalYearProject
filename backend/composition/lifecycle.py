@@ -1,0 +1,479 @@
+"""Controlled lifecycle service for project creation and one-task execution."""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from uuid import uuid4
+
+from backend.agents.analysis.models import AnalysisRequest
+from backend.agents.delivery.models import DeliveryResult
+from backend.agents.planning.models import PlanningRequest
+from backend.agents.qa.models import QAReport
+from backend.agents.qa.models import QAVerdict
+from backend.agents.supervisor.models import (
+    AgentDispatchCommand,
+    AgentName,
+    AgentResultStatus,
+    TaskExecutionStatus,
+)
+from backend.composition.adapters import (
+    AnalysisResultAdapter,
+    CodingResultAdapter,
+    DeliveryResultAdapter,
+    PlanningResultAdapter,
+    QAResultAdapter,
+)
+from backend.composition.agents import AgentBundle
+from backend.composition.dispatcher import AggregateDispatcher
+from backend.composition.errors import CompositionError, InvalidProjectStateError
+from backend.composition.graph import TaskGraphValidator
+from backend.composition.models import (
+    LifecycleMetadata,
+    ProjectAggregate,
+    ProjectInput,
+    ProjectLifecycleStage,
+    QualityGateStatus,
+)
+from backend.composition.repository import ProjectRepository
+from backend.composition.workspace import ProjectWorkspaceProvisioner
+from backend.deployment.docker_provider import DefaultDockerDeploymentProvider
+from backend.deployment.errors import DeploymentError
+from backend.agents.delivery.models import DeliveryRequest, DeploymentTarget, DockerDeploymentConfiguration, ComposeSpecification, DockerServiceConfiguration, DockerfileSpecification, ContainerRuntime
+from backend.agents.delivery.workspace import DeliveryWorkspace
+
+
+class ProjectLifecycleService:
+    """Composes existing agents while keeping their native result contracts intact."""
+
+    _MAX_TASK_ATTEMPTS = 3
+    _MAX_TASK_REWORKS = 2
+    _DEFAULT_MAX_ORCHESTRATION_ITERATIONS = 20
+
+    def __init__(
+        self,
+        repository: ProjectRepository,
+        provisioner: ProjectWorkspaceProvisioner,
+        agents: AgentBundle,
+        dispatcher: AggregateDispatcher,
+        docker_provider: DefaultDockerDeploymentProvider | None = None,
+    ) -> None:
+        self._repository = repository
+        self._provisioner = provisioner
+        self._agents = agents
+        self._dispatcher = dispatcher
+        self._docker_provider = docker_provider or DefaultDockerDeploymentProvider()
+
+    async def create_project(self, project_input: ProjectInput) -> ProjectAggregate:
+        project_id = f"prj_{uuid4().hex}"
+        workspace = self._provisioner.provision(project_id)
+        aggregate = ProjectAggregate(
+            project_id=project_id,
+            project_input=project_input,
+            workspace=workspace,
+        )
+        await self._repository.create(aggregate)
+        try:
+            analysis = await self._agents.analysis.analyze(
+                AnalysisRequest(
+                    project_description=project_input.project_description,
+                    technology_stack=project_input.technology_stack,
+                )
+            )
+            aggregate = AnalysisResultAdapter.attach(aggregate, analysis)
+            await self._repository.update(aggregate)
+
+            planning = await self._agents.planning.plan(
+                PlanningRequest(analysis_artifact=analysis, project_id=project_id)
+            )
+            TaskGraphValidator.validate(planning, analysis)
+            execution_state = self._agents.supervisor.initialize(planning, project_id=project_id)
+            aggregate = PlanningResultAdapter.attach(aggregate, planning, execution_state)
+            return await self._repository.update(aggregate)
+        except Exception as exc:
+            failed = aggregate.model_copy(
+                update={
+                    "lifecycle": LifecycleMetadata(
+                        stage=ProjectLifecycleStage.FAILED,
+                        created_at=aggregate.lifecycle.created_at,
+                        updated_at=datetime.now(timezone.utc),
+                        errors=aggregate.lifecycle.errors + [str(exc)],
+                    )
+                }
+            )
+            await self._repository.update(failed)
+            raise
+
+    async def execute_next_task(self, project_id: str) -> ProjectAggregate:
+        aggregate = await self._repository.get(project_id)
+        if aggregate.execution_state is None:
+            raise InvalidProjectStateError("Project is not ready for task execution.")
+        if aggregate.lifecycle.stage in {
+            ProjectLifecycleStage.PAUSED,
+            ProjectLifecycleStage.READY_FOR_DELIVERY,
+            ProjectLifecycleStage.FAILED,
+        }:
+            raise InvalidProjectStateError(
+                f"Project cannot start Coding while lifecycle stage is '{aggregate.lifecycle.stage.value}'."
+            )
+        blocking_gate = next(
+            (
+                gate
+                for gate in aggregate.quality_gates
+                if gate.status in {QualityGateStatus.PENDING, QualityGateStatus.BLOCKED}
+            ),
+            None,
+        )
+        if blocking_gate is not None:
+            raise InvalidProjectStateError(
+                f"Task '{blocking_gate.task_id}' has a {blocking_gate.status.value} QA gate: {blocking_gate.reason}"
+            )
+        state, decision = self._agents.supervisor.select_next_task(aggregate.execution_state)
+        if decision.selected_task_id is None:
+            refreshed = aggregate.model_copy(update={"execution_state": state})
+            completed = self._with_completion_state(refreshed)
+            if completed.lifecycle.stage == ProjectLifecycleStage.READY_FOR_DELIVERY:
+                return await self._repository.update(completed)
+            return await self._repository.update(
+                self._pause(completed, "No dependency-eligible task exists; project is not ready for Delivery.")
+            )
+        selected = state.tasks[decision.selected_task_id]
+        if selected.attempt_count >= self._MAX_TASK_ATTEMPTS:
+            return await self._repository.update(
+                self._pause(
+                    aggregate.model_copy(update={"execution_state": state}),
+                    f"Task '{decision.selected_task_id}' reached the attempt limit ({self._MAX_TASK_ATTEMPTS}).",
+                )
+            )
+        if selected.rework_count >= self._MAX_TASK_REWORKS:
+            return await self._repository.update(
+                self._pause(
+                    aggregate.model_copy(update={"execution_state": state}),
+                    f"Task '{decision.selected_task_id}' reached the rework limit ({self._MAX_TASK_REWORKS}).",
+                )
+            )
+        state, command = self._agents.supervisor.begin_task(
+            state,
+            decision.selected_task_id,
+            AgentName.CODING,
+        )
+        aggregate = aggregate.model_copy(
+            update={
+                "execution_state": state,
+                "lifecycle": LifecycleMetadata(
+                    stage=ProjectLifecycleStage.EXECUTING,
+                    created_at=aggregate.lifecycle.created_at,
+                    updated_at=datetime.now(timezone.utc),
+                    errors=aggregate.lifecycle.errors,
+                ),
+            }
+        )
+        await self._repository.update(aggregate)
+        try:
+            outcome = await self._dispatcher.dispatch_outcome(aggregate, command)
+            if outcome.execution_result.agent != AgentName.CODING:
+                raise CompositionError("Coding lifecycle received a non-coding dispatch result.")
+            updated = CodingResultAdapter.attach(aggregate, outcome.execution_result, self._agents.supervisor)
+            return await self._repository.update(updated)
+        except Exception as exc:
+            failed_result = command.model_copy(
+                update={"agent": AgentName.CODING}
+            )
+            # Preserve controlled task state by returning the active task as a structured failure.
+            from backend.agents.supervisor.models import AgentExecutionResult
+
+            result = AgentExecutionResult(
+                agent=AgentName.CODING,
+                task_id=failed_result.task_id,
+                status=AgentResultStatus.FAILED,
+                attempt_number=failed_result.attempt_number,
+                errors=[str(exc)],
+                message="Composition dispatch failed before Coding Agent completion.",
+            )
+            state = self._agents.supervisor.apply_agent_result(aggregate.execution_state, result)
+            failed = aggregate.model_copy(
+                update={
+                    "execution_state": state,
+                    "generated_artifacts": state.generated_artifacts,
+                    "lifecycle": LifecycleMetadata(
+                        stage=ProjectLifecycleStage.READY_FOR_EXECUTION,
+                        created_at=aggregate.lifecycle.created_at,
+                        updated_at=datetime.now(timezone.utc),
+                        errors=aggregate.lifecycle.errors + [str(exc)],
+                    ),
+                }
+            )
+            return await self._repository.update(failed)
+
+    async def run_next_task(self, project_id: str) -> ProjectAggregate:
+        """Execute exactly one Supervisor-selected Coding task and its mandatory QA gate."""
+
+        after_coding = await self.execute_next_task(project_id)
+        pending_gate = next(
+            (gate for gate in after_coding.quality_gates if gate.status == QualityGateStatus.PENDING),
+            None,
+        )
+        if pending_gate is None:
+            if after_coding.execution_state and any(
+                task.status == TaskExecutionStatus.FAILED
+                for task in after_coding.execution_state.tasks.values()
+            ):
+                return await self._repository.update(
+                    self._pause(after_coding, "Coding failed; bounded execution has stopped.")
+                )
+            return self._with_completion_state(after_coding)
+        return await self.qa_task(project_id, pending_gate.task_id)
+
+    async def run_until_blocked(
+        self,
+        project_id: str,
+        *,
+        max_iterations: int = _DEFAULT_MAX_ORCHESTRATION_ITERATIONS,
+    ) -> ProjectAggregate:
+        """Run bounded Coding -> QA iterations; never hides a pause, failure, or rework."""
+
+        if not 1 <= max_iterations <= self._DEFAULT_MAX_ORCHESTRATION_ITERATIONS:
+            raise InvalidProjectStateError(
+                f"max_iterations must be between 1 and {self._DEFAULT_MAX_ORCHESTRATION_ITERATIONS}."
+            )
+        latest = await self._repository.get(project_id)
+        for _ in range(max_iterations):
+            latest = self._with_completion_state(latest)
+            if latest.lifecycle.stage in {
+                ProjectLifecycleStage.READY_FOR_DELIVERY,
+                ProjectLifecycleStage.PAUSED,
+                ProjectLifecycleStage.FAILED,
+            }:
+                return await self._repository.update(latest)
+            if any(gate.status == QualityGateStatus.REWORK_REQUIRED for gate in latest.quality_gates):
+                return latest
+            latest = await self.run_next_task(project_id)
+            if any(
+                gate.status in {QualityGateStatus.REWORK_REQUIRED, QualityGateStatus.BLOCKED}
+                for gate in latest.quality_gates
+            ):
+                return latest
+            if latest.execution_state and any(
+                task.status in {TaskExecutionStatus.FAILED, TaskExecutionStatus.BLOCKED}
+                for task in latest.execution_state.tasks.values()
+            ):
+                return await self._repository.update(
+                    self._pause(latest, "Task execution cannot continue until the failed or blocked task is resolved.")
+                )
+        return await self._repository.update(
+            self._pause(latest, f"Orchestration reached its iteration limit ({max_iterations}).")
+        )
+
+    async def qa_task(self, project_id: str, task_id: str) -> ProjectAggregate:
+        """Run the safe QA boundary for one successful Coding task and persist its policy outcome."""
+
+        aggregate = await self._repository.get(project_id)
+        if aggregate.execution_state is None:
+            raise InvalidProjectStateError("Project is not ready for QA.")
+        try:
+            task_state = aggregate.execution_state.tasks[task_id]
+        except KeyError as exc:
+            raise InvalidProjectStateError(f"Unknown task ID: '{task_id}'.") from exc
+        gate = next((item for item in aggregate.quality_gates if item.task_id == task_id), None)
+        if task_state.status != TaskExecutionStatus.COMPLETED or gate is None or gate.status != QualityGateStatus.PENDING:
+            raise InvalidProjectStateError("QA requires a completed Coding task with a pending QA gate.")
+        command = AgentDispatchCommand(
+            project_id=aggregate.project_id,
+            task_id=task_id,
+            agent=AgentName.QA,
+            attempt_number=task_state.attempt_count,
+            task=task_state.task,
+            planning_artifact=aggregate.execution_state.planning_artifact,
+            related_artifacts=task_state.generated_artifacts,
+            rework_feedback=[
+                feedback for feedback in aggregate.execution_state.qa_feedback if feedback.task_id == task_id
+            ],
+        )
+        try:
+            outcome = await self._dispatcher.dispatch_outcome(aggregate, command)
+            if outcome.qa_report is None:
+                raise CompositionError("QA dispatch did not return a QAReport.")
+            updated = QAResultAdapter.attach(aggregate, outcome.qa_report, task_id, self._agents.supervisor)
+            if outcome.qa_report.verdict in {QAVerdict.BLOCKED, QAVerdict.FAIL}:
+                updated = self._pause(updated, f"QA for task '{task_id}' returned {outcome.qa_report.verdict.value}.")
+            else:
+                updated = self._with_completion_state(updated)
+            return await self._repository.update(updated)
+        except Exception as exc:
+            failed = aggregate.model_copy(
+                update={
+                    "lifecycle": LifecycleMetadata(
+                        stage=ProjectLifecycleStage.READY_FOR_EXECUTION,
+                        created_at=aggregate.lifecycle.created_at,
+                        updated_at=datetime.now(timezone.utc),
+                        errors=aggregate.lifecycle.errors + [f"QA task {task_id} failed: {exc}"],
+                    )
+                }
+            )
+            return await self._repository.update(failed)
+
+    async def get_project(self, project_id: str) -> ProjectAggregate:
+        """Retrieve the observable, resumable aggregate state."""
+
+        return await self._repository.get(project_id)
+
+    @staticmethod
+    def _with_completion_state(aggregate: ProjectAggregate) -> ProjectAggregate:
+        """Only expose Delivery readiness after every planned task and QA gate is complete."""
+
+        if aggregate.execution_state is None:
+            return aggregate
+        task_ids = set(aggregate.execution_state.tasks)
+        passed_gate_ids = {
+            gate.task_id for gate in aggregate.quality_gates if gate.status == QualityGateStatus.PASSED
+        }
+        all_tasks_completed = bool(task_ids) and all(
+            task.status == TaskExecutionStatus.COMPLETED
+            for task in aggregate.execution_state.tasks.values()
+        )
+        if all_tasks_completed and passed_gate_ids == task_ids:
+            return aggregate.model_copy(
+                update={
+                    "lifecycle": LifecycleMetadata(
+                        stage=ProjectLifecycleStage.READY_FOR_DELIVERY,
+                        created_at=aggregate.lifecycle.created_at,
+                        updated_at=datetime.now(timezone.utc),
+                        errors=aggregate.lifecycle.errors,
+                    )
+                }
+            )
+        return aggregate
+
+    @staticmethod
+    def _pause(aggregate: ProjectAggregate, reason: str) -> ProjectAggregate:
+        return aggregate.model_copy(
+            update={
+                "lifecycle": LifecycleMetadata(
+                    stage=ProjectLifecycleStage.PAUSED,
+                    created_at=aggregate.lifecycle.created_at,
+                    updated_at=datetime.now(timezone.utc),
+                    errors=aggregate.lifecycle.errors + [reason],
+                )
+            }
+        )
+
+    async def record_qa_report(
+        self,
+        project_id: str,
+        task_id: str,
+        report: QAReport,
+    ) -> ProjectAggregate:
+        """Persist a QA boundary result after an externally controlled QA dispatch."""
+
+        aggregate = await self._repository.get(project_id)
+        updated = QAResultAdapter.attach(aggregate, report, task_id, self._agents.supervisor)
+        if report.verdict in {QAVerdict.BLOCKED, QAVerdict.FAIL}:
+            updated = self._pause(updated, f"QA for task '{task_id}' returned {report.verdict.value}.")
+        else:
+            updated = self._with_completion_state(updated)
+        return await self._repository.update(updated)
+
+    async def record_delivery_result(
+        self,
+        project_id: str,
+        result: DeliveryResult,
+    ) -> ProjectAggregate:
+        """Persist a Delivery boundary result after a controlled provider dispatch."""
+
+        aggregate = await self._repository.get(project_id)
+        return await self._repository.update(
+            DeliveryResultAdapter.attach(aggregate, result, self._agents.supervisor)
+        )
+
+    async def deploy_project(self, project_id: str) -> ProjectAggregate:
+        """Deploy a project via the Delivery Agent and Docker provider."""
+        aggregate = await self._repository.get(project_id)
+        
+        if aggregate.lifecycle.stage != ProjectLifecycleStage.READY_FOR_DELIVERY:
+            raise InvalidProjectStateError(f"Project cannot deploy from stage '{aggregate.lifecycle.stage.value}'.")
+            
+        task_id = "deploy_main"
+        
+        # Build basic DockerDeliveryConfiguration. The Planning/Analysis should ideally inform this,
+        # but for this milestone we deploy a generic single-container fallback if complex services aren't specified.
+        # This matches the "fallback/default" behavior expected when explicit compose isn't there.
+        # NOTE: A real implementation would parse the architecture from planning.
+        docker_config = DockerDeploymentConfiguration(
+            services=[
+                DockerServiceConfiguration(
+                    service_name="app",
+                    build_context=".",
+                    dockerfile=DockerfileSpecification(
+                        path="Dockerfile",
+                        runtime=ContainerRuntime.GENERIC,
+                        base_image="python:3.11-slim",
+                        startup_command=["python", "app.py"]
+                    )
+                )
+            ]
+        )
+        
+        command = AgentDispatchCommand(
+            project_id=project_id,
+            task_id=task_id,
+            agent=AgentName.DELIVERY,
+            attempt_number=1,
+            task=None,
+            planning_artifact=aggregate.planning_artifact,
+            related_artifacts=[],
+            rework_feedback=[],
+        )
+        
+        delivery_request = DeliveryRequest(
+            project_id=project_id,
+            dispatch_command=command,
+            analysis_artifact=aggregate.analysis_artifact,
+            planning_artifact=aggregate.planning_artifact,
+            project_state=aggregate.execution_state,
+            qa_report=aggregate.qa_reports[-1] if aggregate.qa_reports else QAReport(project_id=project_id, task_id="none", summary="", verdict=QAVerdict.PASS),
+            generated_artifacts=aggregate.generated_artifacts,
+            target=DeploymentTarget.DOCKER,
+            docker=docker_config,
+        )
+
+        delivery_workspace = DeliveryWorkspace(str(aggregate.workspace.workspace_dir))
+        prepared_result = self._agents.delivery.prepare(delivery_request, delivery_workspace)
+        
+        if prepared_result.delivery_status != "prepared":
+            return await self.record_delivery_result(project_id, prepared_result)
+            
+        provider_result = await self._docker_provider.deploy(delivery_request)
+        
+        # Adapt DeploymentProviderResult into a DeliveryResult
+        final_result = DeliveryResult(
+            agent=AgentName.DELIVERY,
+            task_id=task_id,
+            status=AgentResultStatus.SUCCEEDED if provider_result.status == "deployed" else AgentResultStatus.FAILED,
+            attempt_number=1,
+            delivery_status=provider_result.status,
+            target=DeploymentTarget.DOCKER,
+            deployment_id=provider_result.deployment_id,
+            image_references=provider_result.image_references,
+            service_references=provider_result.service_references,
+            project_url=provider_result.project_url,
+            logs=provider_result.logs,
+            errors=provider_result.errors,
+            message="Docker deployment complete." if provider_result.status == "deployed" else "Docker deployment failed."
+        )
+        
+        return await self.record_delivery_result(project_id, final_result)
+
+    async def rollback_project(self, project_id: str) -> ProjectAggregate:
+        aggregate = await self._repository.get(project_id)
+        if not aggregate.delivery_result or aggregate.delivery_result.delivery_status != "deployed":
+            raise InvalidProjectStateError("Cannot rollback a project that is not deployed.")
+            
+        provider_result = await self._docker_provider.rollback(aggregate.delivery_result.deployment_id or project_id)
+        
+        final_result = aggregate.delivery_result.model_copy(
+            update={
+                "delivery_status": provider_result.status,
+                "project_url": None,
+                "message": "Deployment rolled back."
+            }
+        )
+        return await self.record_delivery_result(project_id, final_result)

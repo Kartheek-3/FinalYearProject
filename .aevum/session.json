@@ -1,0 +1,21 @@
+{
+  "activeFiles": [
+    "backend\\README.md",
+    "README.md",
+    ".env.example",
+    "backend\\composition\\graph.py",
+    "backend\\agents\\planning\\agent.py"
+  ],
+  "recentEdits": [
+    {
+      "filePath": "backend\\llm\\factory.py",
+      "timestamp": "2026-09-01T08:36:30.519Z"
+    },
+    {
+      "filePath": "..\\..\\AppData\\Roaming\\Antigravity IDE\\User\\settings.json",
+      "timestamp": "2026-09-01T08:36:09.315Z"
+    }
+  ],
+  "lastTerminalOutputs": [],
+  "timestamp": "2026-09-01T10:14:30.472Z"
+}
