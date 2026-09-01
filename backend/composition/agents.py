@@ -28,16 +28,34 @@ class AgentBundle:
     delivery: DeliveryAgent
 
 
+from backend.rag.interfaces import MemoryKnowledgeRetriever
+from backend.memory import get_memory_manager
+
 def build_agent_bundle(registry: ModelClientRegistry) -> AgentBundle:
     analysis_settings = AnalysisAgentSettings.from_environment()
     planning_settings = PlanningAgentSettings.from_environment()
     coding_settings = CodingAgentSettings.from_environment()
     qa_settings = QAAgentSettings.from_environment()
+    
+    retriever = MemoryKnowledgeRetriever(get_memory_manager())
+    
     return AgentBundle(
-        analysis=AnalysisAgent(registry.create(analysis_settings.llm), analysis_settings.llm),
-        planning=PlanningDesignAgent(registry.create(planning_settings.llm), planning_settings.llm),
+        analysis=AnalysisAgent(
+            llm_client=registry.create(analysis_settings.llm), 
+            model_config=analysis_settings.llm,
+            knowledge_retriever=retriever
+        ),
+        planning=PlanningDesignAgent(
+            llm_client=registry.create(planning_settings.llm), 
+            model_config=planning_settings.llm,
+            knowledge_retriever=retriever
+        ),
         supervisor=SupervisorOrchestrator(),
-        coding=CodingAgent(registry.create(coding_settings.llm), coding_settings.llm),
+        coding=CodingAgent(
+            llm_client=registry.create(coding_settings.llm), 
+            model_config=coding_settings.llm,
+            knowledge_retriever=retriever
+        ),
         qa=QAAgent(
             code_review_provider=LLMCodeReviewProvider(
                 registry.create(qa_settings.llm), qa_settings.llm

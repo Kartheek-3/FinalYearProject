@@ -42,4 +42,10 @@ export const api = {
     const wsBase = API_BASE.replace(/^http/, 'ws');
     return `${wsBase}/ws/projects/${id}/runtime`;
   },
+
+  getMemoryStats: () =>
+    fetch(`${API_BASE}/memory/stats`).then(handleResponse),
+
+  getRecentMemory: (limit = 5) =>
+    fetch(`${API_BASE}/memory/recent?limit=${limit}`).then(handleResponse),
 };

@@ -142,6 +142,16 @@ def create_app(registry: ModelClientRegistry | None = None) -> FastAPI:
         except CompositionError as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
+    from backend.memory import get_memory_manager
+
+    @app.get("/memory/stats")
+    async def get_memory_stats() -> dict:
+        return get_memory_manager().get_stats()
+        
+    @app.get("/memory/recent")
+    async def get_recent_memory(limit: int = 5) -> list[dict]:
+        return get_memory_manager().get_recent(limit)
+
     return app
 
 

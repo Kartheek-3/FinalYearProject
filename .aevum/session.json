@@ -1,10 +1,10 @@
 {
   "activeFiles": [
-    "frontend\\src\\components\\QAInspector.tsx",
-    "frontend\\src\\components\\LifecyclePipeline.tsx",
-    "frontend\\src\\components\\DeploymentPanel.tsx",
-    "frontend\\tsconfig.app.json",
-    "frontend\\src\\pages\\ProjectDetails.tsx"
+    "frontend\\src\\types\\api.ts",
+    "backend\\main.py",
+    "backend\\agents\\planning\\agent.py",
+    "backend\\composition\\lifecycle.py",
+    "backend\\composition\\events.py"
   ],
   "recentEdits": [
     {
@@ -17,5 +17,5 @@
     }
   ],
   "lastTerminalOutputs": [],
-  "timestamp": "2026-09-01T22:34:57.702Z"
+  "timestamp": "2026-09-01T22:35:13.810Z"
 }

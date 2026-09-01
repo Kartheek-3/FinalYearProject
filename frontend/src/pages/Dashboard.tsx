@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search } from 'lucide-react';
+import OrganizationalMemoryPanel from '../components/OrganizationalMemoryPanel';
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -39,6 +40,10 @@ export default function Dashboard() {
         <div className="mt-4 text-xs text-secondary">
           Tip: You can find existing Project IDs in the backend console output, or create a new project from the Activity Bar.
         </div>
+      </div>
+
+      <div className="mt-8" style={{ height: '300px', display: 'flex' }}>
+        <OrganizationalMemoryPanel />
       </div>
     </div>
   );

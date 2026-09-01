@@ -11,6 +11,8 @@ from backend.agents.delivery.models import DeliveryResult
 from backend.agents.planning.models import PlanningRequest
 from backend.agents.qa.models import QAReport
 from backend.agents.qa.models import QAVerdict
+from backend.memory.models import MemoryType, MemoryRecord
+from backend.memory import get_memory_manager
 from backend.agents.supervisor.models import (
     AgentDispatchCommand,
     AgentName,
@@ -116,6 +118,7 @@ class ProjectLifecycleService:
             aggregate = await self.run_until_blocked(project_id)
             
             if aggregate.lifecycle.stage == ProjectLifecycleStage.READY_FOR_DELIVERY:
+                self._ingest_project_outcome(aggregate)
                 await self.deploy_project(project_id)
                 
             _emit_sync(project_id, "runtime.completed", {})
@@ -522,3 +525,42 @@ class ProjectLifecycleService:
             }
         )
         return await self.record_delivery_result(project_id, final_result)
+
+    def _ingest_project_outcome(self, aggregate: ProjectAggregate) -> None:
+        """Extract and store validated knowledge from a completed project."""
+        manager = get_memory_manager()
+        
+        if not aggregate.analysis_artifact or not aggregate.planning_artifact:
+            return
+            
+        domain = aggregate.analysis_artifact.result.domain.primary_domain
+        tech_stack = [tc.technology for tc in aggregate.analysis_artifact.result.technology_constraints]
+        
+        # Ingest Architecture Pattern
+        arch = aggregate.planning_artifact.result.architecture
+        arch_record = MemoryRecord(
+            memory_id=f"arch_{aggregate.project_id}",
+            memory_type=MemoryType.ARCHITECTURE_PATTERN,
+            title=f"Architecture pattern for {domain}",
+            content=f"Design pattern: {arch.design_pattern.value}. Component details: {arch.components}",
+            domain=domain,
+            technology_stack=tech_stack,
+            source_project_id=aggregate.project_id,
+            source_agent="planning",
+            created_at=time.time(),
+        )
+        manager.store(arch_record)
+        
+        # Ingest Project Outcome
+        outcome_record = MemoryRecord(
+            memory_id=f"outcome_{aggregate.project_id}",
+            memory_type=MemoryType.PROJECT_OUTCOME,
+            title=f"Successful delivery of {domain}",
+            content=aggregate.analysis_artifact.result.project_summary,
+            domain=domain,
+            technology_stack=tech_stack,
+            source_project_id=aggregate.project_id,
+            source_agent="supervisor",
+            created_at=time.time(),
+        )
+        manager.store(outcome_record)
