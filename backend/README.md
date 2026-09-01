@@ -74,7 +74,7 @@ Model aliases are configurable with `SEAM_LLAMA_3_1_MODEL`,
 `SEAM_DEEPSEEK_CODER_MODEL`, and `SEAM_QWEN2_5_CODER_MODEL`.
 
 For robust project generation, it is strongly recommended to configure:
-- `SEAM_ANALYSIS_MODEL="llama-3.1"`
-- `SEAM_PLANNING_MODEL="llama-3.1"`
+- `SEAM_ANALYSIS_MODEL="qwen2.5-coder"`
+- `SEAM_PLANNING_MODEL="qwen2.5-coder"`
 - `SEAM_CODING_MODEL="qwen2.5-coder"`
 - `SEAM_QA_MODEL="qwen2.5-coder"`

@@ -17,8 +17,7 @@ SEAM source code and generated-product source code must never share a working di
 
 1. **Ollama**: Must be installed and running locally (`http://localhost:11434/v1`).
 2. **Models**: You must pull the required models manually before generating a project:
-   - `ollama pull qwen2.5-coder` (for Coding and QA)
-   - `ollama pull llama3.1` (for Analysis and Planning)
+   - `ollama pull qwen2.5-coder` (unified model used for Analysis, Planning, Coding, and QA)
 
 > **Note**: Larger reasoning models require significant RAM/VRAM. Generation testing is a separate step that should only be performed after configuring these models.
 

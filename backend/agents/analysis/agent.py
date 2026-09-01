@@ -32,8 +32,7 @@ class AnalysisAgent:
         """Run analysis and fail explicitly if evidence or schema validation fails."""
 
         knowledge = await self._retrieve_knowledge(request)
-        response = await self._generate_response(request, knowledge)
-        result = self._validate_response(response)
+        result = await self._generate_and_validate(request, knowledge)
         return AnalysisArtifact(result=result)
 
     async def _retrieve_knowledge(self, request: AnalysisRequest) -> Sequence[KnowledgeSnippet]:
@@ -49,39 +48,38 @@ class AnalysisAgent:
                 "Analysis knowledge retrieval failed; requirements were not generated."
             ) from exc
 
-    async def _generate_response(
+    async def _generate_and_validate(
         self,
         request: AnalysisRequest,
         knowledge: Sequence[KnowledgeSnippet],
-    ) -> Mapping[str, Any]:
+    ) -> StructuredRequirements:
+        from backend.llm.repair import generate_with_repair, LLMRepairExhaustedError
+
+        def validator(response: Mapping[str, Any]) -> StructuredRequirements:
+            if not isinstance(response, Mapping):
+                raise AnalysisResponseValidationError("LLM response must be a JSON object.")
+            try:
+                return StructuredRequirements.model_validate(response)
+            except ValidationError as exc:
+                raise AnalysisResponseValidationError(
+                    f"LLM response does not satisfy the Analysis Agent output contract:\n{exc}"
+                ) from exc
+
         try:
-            response = await self.llm_client.generate_structured(
+            return await generate_with_repair(
+                client=self.llm_client,
+                model_config=self.model_config,
                 system_prompt=ANALYSIS_SYSTEM_PROMPT,
-                user_prompt=build_analysis_user_prompt(request, knowledge),
-                model=self.model_config,
+                base_user_prompt=build_analysis_user_prompt(request, knowledge),
                 output_schema=StructuredRequirements.model_json_schema(),
+                validator=validator,
+                max_attempts=3,
             )
-        except LLMInvocationError as exc:
+        except LLMRepairExhaustedError as exc:
             import traceback
             traceback.print_exc()
-            raise AnalysisProviderError("The configured LLM failed to analyze the request.") from exc
+            raise AnalysisProviderError("The configured LLM failed to analyze the request after retries.") from exc
         except Exception as exc:
             import traceback
             traceback.print_exc()
             raise AnalysisProviderError("Unexpected failure while invoking the configured LLM.") from exc
-
-        if not isinstance(response, Mapping):
-            raise AnalysisResponseValidationError("LLM response must be a JSON object.")
-        return response
-
-    @staticmethod
-    def _validate_response(response: Mapping[str, Any]) -> StructuredRequirements:
-        try:
-            return StructuredRequirements.model_validate(response)
-        except ValidationError as exc:
-            import traceback
-            traceback.print_exc()
-            print("RAW JSON:", response)
-            raise AnalysisResponseValidationError(
-                "LLM response does not satisfy the Analysis Agent output contract."
-            ) from exc

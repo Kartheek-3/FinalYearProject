@@ -1,10 +1,10 @@
 {
   "activeFiles": [
-    "backend\\README.md",
-    "README.md",
-    ".env.example",
-    "backend\\composition\\graph.py",
-    "backend\\agents\\planning\\agent.py"
+    "frontend\\src\\components\\QAInspector.tsx",
+    "frontend\\src\\components\\LifecyclePipeline.tsx",
+    "frontend\\src\\components\\DeploymentPanel.tsx",
+    "frontend\\tsconfig.app.json",
+    "frontend\\src\\pages\\ProjectDetails.tsx"
   ],
   "recentEdits": [
     {
@@ -17,5 +17,5 @@
     }
   ],
   "lastTerminalOutputs": [],
-  "timestamp": "2026-09-01T10:14:30.472Z"
+  "timestamp": "2026-09-01T22:34:57.702Z"
 }

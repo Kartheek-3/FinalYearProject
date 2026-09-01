@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from uuid import uuid4
+import asyncio
 
 from backend.agents.analysis.models import AnalysisRequest
 from backend.agents.delivery.models import DeliveryResult
@@ -40,6 +41,16 @@ from backend.deployment.docker_provider import DefaultDockerDeploymentProvider
 from backend.deployment.errors import DeploymentError
 from backend.agents.delivery.models import DeliveryRequest, DeploymentTarget, DockerDeploymentConfiguration, ComposeSpecification, DockerServiceConfiguration, DockerfileSpecification, ContainerRuntime
 from backend.agents.delivery.workspace import DeliveryWorkspace
+from backend.composition.events import event_gateway, RuntimeEvent
+import time
+
+def _emit_sync(project_id: str, event_type: str, data: dict | None = None) -> None:
+    asyncio.create_task(event_gateway.publish(RuntimeEvent(
+        event_type=event_type,
+        project_id=project_id,
+        timestamp=time.time(),
+        data=data or {}
+    )))
 
 
 class ProjectLifecycleService:
@@ -72,7 +83,15 @@ class ProjectLifecycleService:
             workspace=workspace,
         )
         await self._repository.create(aggregate)
+        _emit_sync(project_id, "project.created", {"project_id": project_id})
+        return aggregate
+
+    async def run_autonomous(self, project_id: str) -> None:
         try:
+            aggregate = await self._repository.get(project_id)
+            project_input = aggregate.project_input
+            
+            _emit_sync(project_id, "agent.started", {"agent": "analysis"})
             analysis = await self._agents.analysis.analyze(
                 AnalysisRequest(
                     project_description=project_input.project_description,
@@ -81,15 +100,30 @@ class ProjectLifecycleService:
             )
             aggregate = AnalysisResultAdapter.attach(aggregate, analysis)
             await self._repository.update(aggregate)
+            _emit_sync(project_id, "agent.completed", {"agent": "analysis"})
 
+            _emit_sync(project_id, "agent.started", {"agent": "planning"})
             planning = await self._agents.planning.plan(
                 PlanningRequest(analysis_artifact=analysis, project_id=project_id)
             )
             TaskGraphValidator.validate(planning, analysis)
             execution_state = self._agents.supervisor.initialize(planning, project_id=project_id)
             aggregate = PlanningResultAdapter.attach(aggregate, planning, execution_state)
-            return await self._repository.update(aggregate)
+            _emit_sync(project_id, "agent.completed", {"agent": "planning"})
+            
+            await self._repository.update(aggregate)
+            
+            aggregate = await self.run_until_blocked(project_id)
+            
+            if aggregate.lifecycle.stage == ProjectLifecycleStage.READY_FOR_DELIVERY:
+                await self.deploy_project(project_id)
+                
+            _emit_sync(project_id, "runtime.completed", {})
+            
         except Exception as exc:
+            import traceback
+            traceback.print_exc()
+            aggregate = await self._repository.get(project_id)
             failed = aggregate.model_copy(
                 update={
                     "lifecycle": LifecycleMetadata(
@@ -101,7 +135,7 @@ class ProjectLifecycleService:
                 }
             )
             await self._repository.update(failed)
-            raise
+            _emit_sync(project_id, "runtime.failed", {"error": str(exc)})
 
     async def execute_next_task(self, project_id: str) -> ProjectAggregate:
         aggregate = await self._repository.get(project_id)
@@ -168,11 +202,13 @@ class ProjectLifecycleService:
             }
         )
         await self._repository.update(aggregate)
+        _emit_sync(project_id, "task.started", {"task_id": decision.selected_task_id})
         try:
             outcome = await self._dispatcher.dispatch_outcome(aggregate, command)
             if outcome.execution_result.agent != AgentName.CODING:
                 raise CompositionError("Coding lifecycle received a non-coding dispatch result.")
             updated = CodingResultAdapter.attach(aggregate, outcome.execution_result, self._agents.supervisor)
+            _emit_sync(project_id, "task.completed", {"task_id": decision.selected_task_id})
             return await self._repository.update(updated)
         except Exception as exc:
             failed_result = command.model_copy(
@@ -288,14 +324,17 @@ class ProjectLifecycleService:
                 feedback for feedback in aggregate.execution_state.qa_feedback if feedback.task_id == task_id
             ],
         )
+        _emit_sync(project_id, "qa.started", {"task_id": task_id})
         try:
             outcome = await self._dispatcher.dispatch_outcome(aggregate, command)
             if outcome.qa_report is None:
                 raise CompositionError("QA dispatch did not return a QAReport.")
             updated = QAResultAdapter.attach(aggregate, outcome.qa_report, task_id, self._agents.supervisor)
             if outcome.qa_report.verdict in {QAVerdict.BLOCKED, QAVerdict.FAIL}:
+                _emit_sync(project_id, "qa.failed", {"task_id": task_id, "verdict": outcome.qa_report.verdict.value})
                 updated = self._pause(updated, f"QA for task '{task_id}' returned {outcome.qa_report.verdict.value}.")
             else:
+                _emit_sync(project_id, "qa.completed", {"task_id": task_id})
                 updated = self._with_completion_state(updated)
             return await self._repository.update(updated)
         except Exception as exc:
@@ -436,11 +475,14 @@ class ProjectLifecycleService:
         )
 
         delivery_workspace = DeliveryWorkspace(str(aggregate.workspace.workspace_dir))
+        
+        _emit_sync(project_id, "delivery.started", {})
         prepared_result = self._agents.delivery.prepare(delivery_request, delivery_workspace)
         
         if prepared_result.delivery_status != "prepared":
             return await self.record_delivery_result(project_id, prepared_result)
             
+        _emit_sync(project_id, "docker.started", {})
         provider_result = await self._docker_provider.deploy(delivery_request)
         
         # Adapt DeploymentProviderResult into a DeliveryResult
@@ -459,6 +501,9 @@ class ProjectLifecycleService:
             errors=provider_result.errors,
             message="Docker deployment complete." if provider_result.status == "deployed" else "Docker deployment failed."
         )
+        
+        if provider_result.status == "deployed":
+            _emit_sync(project_id, "docker.healthy", {"url": str(provider_result.project_url)})
         
         return await self.record_delivery_result(project_id, final_result)
 

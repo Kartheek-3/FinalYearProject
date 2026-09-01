@@ -19,4 +19,4 @@ class LLMModelConfig(BaseModel):
 
     model: SupportedModel
     temperature: float = 0.0
-    max_output_tokens: int = 4096
+    max_output_tokens: int = 8192

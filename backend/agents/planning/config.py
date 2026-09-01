@@ -21,7 +21,7 @@ class PlanningAgentSettings:
 
     @classmethod
     def from_environment(cls) -> "PlanningAgentSettings":
-        raw_model = os.getenv("SEAM_PLANNING_MODEL", SupportedModel.LLAMA_3_1.value)
+        raw_model = os.getenv("SEAM_PLANNING_MODEL", SupportedModel.QWEN2_5_CODER.value)
         try:
             model = SupportedModel(raw_model)
         except ValueError as exc:

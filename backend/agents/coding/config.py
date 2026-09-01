@@ -17,7 +17,7 @@ class CodingAgentSettings:
 
     @classmethod
     def from_environment(cls) -> "CodingAgentSettings":
-        raw_model = os.getenv("SEAM_CODING_MODEL", SupportedModel.DEEPSEEK_CODER.value)
+        raw_model = os.getenv("SEAM_CODING_MODEL", SupportedModel.QWEN2_5_CODER.value)
         try:
             model = SupportedModel(raw_model)
         except ValueError as exc:

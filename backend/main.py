@@ -7,7 +7,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, status, BackgroundTasks, WebSocket, WebSocketDisconnect
+import asyncio
 
 from backend.composition.agents import build_agent_bundle
 from backend.composition.dispatcher import AggregateDispatcher
@@ -16,6 +17,7 @@ from backend.composition.lifecycle import ProjectLifecycleService
 from backend.composition.models import ProjectAggregate, ProjectInput
 from backend.composition.repository import InMemoryProjectRepository
 from backend.composition.workspace import ProjectWorkspaceProvisioner
+from backend.composition.events import event_gateway
 from backend.llm.factory import ModelClientRegistry
 
 
@@ -30,8 +32,19 @@ def build_lifecycle_service(registry: ModelClientRegistry | None = None) -> Proj
     return ProjectLifecycleService(repository, provisioner, agents, dispatcher)
 
 
+from fastapi.middleware.cors import CORSMiddleware
+
 def create_app(registry: ModelClientRegistry | None = None) -> FastAPI:
     app = FastAPI(title="SEAM", version="0.1.0")
+    
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    
     lifecycle = build_lifecycle_service(registry)
     app.state.lifecycle = lifecycle
 
@@ -46,8 +59,30 @@ def create_app(registry: ModelClientRegistry | None = None) -> FastAPI:
         except CompositionError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         except Exception as exc:
-            # In the default composition this reports the intentionally absent LLM provider.
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+
+    @app.post("/projects/{project_id}/run", status_code=status.HTTP_202_ACCEPTED)
+    async def run_autonomous_project(project_id: str, background_tasks: BackgroundTasks) -> dict:
+        try:
+            aggregate = await lifecycle.get_project(project_id)
+        except CompositionError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+            
+        background_tasks.add_task(lifecycle.run_autonomous, project_id)
+        return {"status": "accepted", "message": "Autonomous run started."}
+
+    @app.websocket("/ws/projects/{project_id}/runtime")
+    async def websocket_runtime(websocket: WebSocket, project_id: str):
+        await websocket.accept()
+        queue = event_gateway.subscribe(project_id)
+        try:
+            while True:
+                event = await queue.get()
+                await websocket.send_json(event.model_dump())
+        except WebSocketDisconnect:
+            pass
+        finally:
+            event_gateway.unsubscribe(project_id, queue)
 
     @app.get("/projects/{project_id}", response_model=ProjectAggregate)
     async def get_project(project_id: str) -> ProjectAggregate:

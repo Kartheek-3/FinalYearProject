@@ -56,12 +56,11 @@ class OpenAICompatibleStructuredLLMClient:
                 f"Your task is to output a single JSON object containing real project data that conforms to the following JSON Schema.\n"
                 f"```json\n{schema_str}\n```\n\n"
                 f"CRITICAL RULES:\n"
-                f"1. You MUST output fully expanded JSON data.\n"
-                f"2. You MUST NOT output a JSON schema definition.\n"
-                f"3. Do NOT output a dict with 'properties' and 'type'.\n"
-                f"4. Use the exact field names from the schema.\n"
-                f"EXAMPLE OF EXPECTED DATA OUTPUT:\n"
-                f'{{\n  "project_summary": "example",\n  "roadmap": [],\n  "implementation_tasks": [],\n  "architecture": {{}},\n  "database": {{}},\n  "api": {{}},\n  "project_structure": {{}}\n}}\n'
+                f"1. You MUST output fully expanded JSON data with all required fields.\n"
+                f"2. You MUST NOT output a JSON schema definition. Do NOT output a dict with 'properties' and 'type'.\n"
+                f"3. Use the exact field names from the schema. DO NOT invent simplified fields (e.g., 'description') to replace required nested structures.\n"
+                f"4. All nested objects and lists must be fully populated according to their definitions.\n"
+                f"5. All Enum values are STRICTLY case-sensitive. You MUST output them exactly as defined in the schema (e.g., 'backend' not 'Backend').\n"
             )
 
             mod_user_prompt = user_prompt
