@@ -84,5 +84,28 @@ class TestMemorySystem(unittest.TestCase):
         results = self.manager.retrieve("How to build FastAPI", domain="data_science", limit=5)
         self.assertEqual(len(results), 0)
 
+    def test_cross_project_retrieval(self):
+        # Ingest a lesson from Project A
+        project_a_record = MemoryRecord(
+            memory_id="5",
+            memory_type=MemoryType.QA_LESSON,
+            title="CORS Configuration Issue",
+            content="FastAPI apps must configure CORSMiddleware before specific routes are mounted.",
+            domain="web",
+            technology_stack=["fastapi"],
+            source_project_id="prj_A",
+            source_agent="qa",
+            created_at=time.time()
+        )
+        self.manager.store(project_a_record)
+        
+        # Project B (different project) queries for FastAPI configuration
+        results = self.manager.retrieve("How to configure FastAPI CORS", limit=5)
+        self.assertEqual(len(results), 1)
+        
+        # Verify it retrieved Project A's lesson
+        self.assertEqual(results[0]["metadata"]["source_project_id"], "prj_A")
+        self.assertIn("CORSMiddleware", results[0]["content"])
+
 if __name__ == '__main__':
     unittest.main()

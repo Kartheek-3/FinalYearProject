@@ -63,8 +63,9 @@ class SupervisorOrchestrator:
         TaskExecutionStatus.CANCELLED: set(),
     }
 
-    def __init__(self, selector: DeterministicTaskSelector | None = None) -> None:
+    def __init__(self, selector: DeterministicTaskSelector | None = None, knowledge_retriever=None) -> None:
         self._selector = selector or DeterministicTaskSelector()
+        self._knowledge_retriever = knowledge_retriever
 
     def initialize(
         self,
@@ -112,7 +113,7 @@ class SupervisorOrchestrator:
         refreshed = self.refresh_eligibility(state)
         return refreshed, self._selector.select(refreshed)
 
-    def begin_task(
+    async def begin_task(
         self,
         state: ProjectExecutionState,
         task_id: str,
@@ -131,6 +132,21 @@ class SupervisorOrchestrator:
             increment_attempt=True,
         )
         task_state = updated.tasks[task_id]
+        
+        related_knowledge = []
+        if self._knowledge_retriever is not None:
+            try:
+                query = f"Task failure patterns and workflow lessons for {task_state.task.description}"
+                snippets = await self._knowledge_retriever.retrieve(
+                    query=query, 
+                    limit=3, 
+                    project_id=updated.project_id, 
+                    agent="supervisor"
+                )
+                related_knowledge = [s.model_dump() for s in snippets]
+            except Exception as exc:
+                pass
+                
         return updated, AgentDispatchCommand(
             project_id=updated.project_id,
             task_id=task_id,
@@ -142,6 +158,7 @@ class SupervisorOrchestrator:
             rework_feedback=[
                 feedback for feedback in updated.qa_feedback if feedback.task_id == task_id
             ],
+            related_knowledge=related_knowledge,
         )
 
     def retry_failed_task(self, state: ProjectExecutionState, task_id: str) -> ProjectExecutionState:

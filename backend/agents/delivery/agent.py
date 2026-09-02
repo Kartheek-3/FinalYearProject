@@ -16,16 +16,39 @@ from backend.agents.delivery.workspace import DeliveryWorkspace
 from backend.agents.supervisor.models import AgentName, AgentResultStatus, ArtifactReference
 
 
+from backend.rag.interfaces import KnowledgeRetriever, KnowledgeSnippet
+import json
+
 @dataclass(slots=True)
 class DeliveryAgent:
     """Prepares a QA-approved generated product without invoking Docker itself."""
 
-    def prepare(self, request: DeliveryRequest, workspace: DeliveryWorkspace) -> DeliveryResult:
+    knowledge_retriever: KnowledgeRetriever | None = None
+
+    async def prepare(self, request: DeliveryRequest, workspace: DeliveryWorkspace) -> DeliveryResult:
         started_at = datetime.now(timezone.utc)
         command = request.dispatch_command
         try:
             DeliveryValidator.validate(request, workspace)
             artifacts = self._create_declared_deployment_files(request, workspace)
+            
+            related_knowledge = []
+            if self.knowledge_retriever is not None:
+                try:
+                    snippets = await self.knowledge_retriever.retrieve(
+                        query="deployment configuration, environment setup, docker lessons",
+                        limit=3,
+                        project_id=request.project_id,
+                        agent="delivery"
+                    )
+                    related_knowledge = [s.model_dump() for s in snippets]
+                except Exception:
+                    pass
+            
+            metadata = {"provider": "docker", "execution": "not_started"}
+            if related_knowledge:
+                metadata["related_knowledge"] = json.dumps(related_knowledge)
+                
             return DeliveryResult(
                 agent=AgentName.DELIVERY,
                 task_id=command.task_id,
@@ -38,7 +61,7 @@ class DeliveryAgent:
                 deployment_artifacts=artifacts,
                 produced_artifacts=artifacts,
                 message="Docker delivery configuration prepared; controlled build/deployment is deferred.",
-                metadata={"provider": "docker", "execution": "not_started"},
+                metadata=metadata,
             )
         except DeliveryError as exc:
             return DeliveryResult(

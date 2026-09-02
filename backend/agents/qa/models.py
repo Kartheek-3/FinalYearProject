@@ -165,6 +165,7 @@ class CodeReviewRequest(SupervisorModel):
     task_ids: list[Identifier] = Field(min_length=1)
     source_files: list[ExistingFileContext] = Field(min_length=1)
     artifact_references: list[ArtifactReference] = Field(default_factory=list)
+    related_knowledge: list[dict] = Field(default_factory=list)
 
 
 class CodeReviewProposal(SupervisorModel):

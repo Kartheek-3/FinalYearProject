@@ -30,3 +30,6 @@ redis_data/
 # Logs and artifacts
 *.log
 artifacts/
+backend/.seam_db.json
+scratch/
+.aevum/chroma/

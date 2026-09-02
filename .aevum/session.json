@@ -1,10 +1,10 @@
 {
   "activeFiles": [
-    "frontend\\src\\types\\api.ts",
+    "frontend\\src\\components\\EditorView.tsx",
+    "frontend\\src\\components\\FileExplorer.tsx",
     "backend\\main.py",
-    "backend\\agents\\planning\\agent.py",
     "backend\\composition\\lifecycle.py",
-    "backend\\composition\\events.py"
+    "tests\\integration\\test_persistence_flow.py"
   ],
   "recentEdits": [
     {
@@ -17,5 +17,5 @@
     }
   ],
   "lastTerminalOutputs": [],
-  "timestamp": "2026-09-01T22:35:13.810Z"
+  "timestamp": "2026-09-02T00:37:19.718Z"
 }

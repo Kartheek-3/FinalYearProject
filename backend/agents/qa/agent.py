@@ -28,12 +28,15 @@ from backend.agents.qa.workspace import ReadOnlyWorkspace
 from backend.agents.supervisor.models import AgentName, ArtifactReference
 
 
+from backend.rag.interfaces import KnowledgeRetriever, KnowledgeSnippet
+
 @dataclass(slots=True)
 class QAAgent:
     """Validates generated-project evidence without source-code mutation authority."""
 
     execution_provider: ValidationExecutionProvider | None = None
     code_review_provider: CodeReviewProvider | None = None
+    knowledge_retriever: KnowledgeRetriever | None = None
 
     async def evaluate(self, request: QARequest, workspace: ReadOnlyWorkspace) -> QAReport:
         issues, workspace_check = self._inspect_artifacts(request, workspace)
@@ -119,6 +122,19 @@ class QAAgent:
                 related_task_ids=task_ids,
                 errors=["No structured code-review provider is configured."],
             ), []
+        related_knowledge = []
+        if self.knowledge_retriever is not None:
+            try:
+                snippets = await self.knowledge_retriever.retrieve(
+                    query="QA lessons, security lessons, testing patterns, known failure patterns",
+                    limit=3,
+                    project_id=request.project_id,
+                    agent="qa"
+                )
+                related_knowledge = [s.model_dump() for s in snippets]
+            except Exception:
+                pass
+                
         try:
             result = await self.code_review_provider.review(
                 CodeReviewRequest(
@@ -126,6 +142,7 @@ class QAAgent:
                     task_ids=task_ids,
                     source_files=source_files,
                     artifact_references=request.generated_artifacts,
+                    related_knowledge=related_knowledge,
                 )
             )
             if not isinstance(result, ExecutionResult) or result.category != ValidationCategory.CODE_REVIEW:

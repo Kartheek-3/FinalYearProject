@@ -42,6 +42,8 @@ class AnalysisAgent:
             return await self.knowledge_retriever.retrieve(
                 query=request.project_description,
                 limit=5,
+                project_id=request.project_id,
+                agent="analysis"
             )
         except Exception as exc:
             raise AnalysisKnowledgeRetrievalError(

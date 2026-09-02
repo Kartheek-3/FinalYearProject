@@ -98,6 +98,7 @@ class ProjectLifecycleService:
                 AnalysisRequest(
                     project_description=project_input.project_description,
                     technology_stack=project_input.technology_stack,
+                    project_id=project_id,
                 )
             )
             aggregate = AnalysisResultAdapter.attach(aggregate, analysis)
@@ -113,6 +114,24 @@ class ProjectLifecycleService:
             aggregate = PlanningResultAdapter.attach(aggregate, planning, execution_state)
             _emit_sync(project_id, "agent.completed", {"agent": "planning"})
             
+            # Persist planning artifacts to physical workspace
+            try:
+                workspace = self._provisioner.open(aggregate.workspace)
+                workspace.create_file("planning/analysis.json", analysis.model_dump_json(indent=2))
+                workspace.create_file("planning/foundation.json", planning.result.foundation.model_dump_json(indent=2))
+                workspace.create_file("planning/architecture.json", planning.result.architecture.model_dump_json(indent=2))
+                workspace.create_file("planning/database.json", planning.result.database.model_dump_json(indent=2))
+                workspace.create_file("planning/api.json", planning.result.api.model_dump_json(indent=2))
+                workspace.create_file("planning/workflows.json", planning.result.workflows.model_dump_json(indent=2))
+                workspace.create_file("planning/project_structure.json", planning.result.project_structure.model_dump_json(indent=2))
+                workspace.create_file("planning/execution.json", planning.result.execution.model_dump_json(indent=2))
+                workspace.create_file("planning/traceability.json", planning.result.traceability.model_dump_json(indent=2))
+                workspace.create_file("planning/project_plan.json", planning.model_dump_json(indent=2))
+            except Exception as e:
+                # Log or handle workspace creation error, but don't crash
+                import logging
+                logging.getLogger(__name__).error(f"Failed to persist planning artifacts: {e}")
+
             await self._repository.update(aggregate)
             
             aggregate = await self.run_until_blocked(project_id)
@@ -188,7 +207,7 @@ class ProjectLifecycleService:
                     f"Task '{decision.selected_task_id}' reached the rework limit ({self._MAX_TASK_REWORKS}).",
                 )
             )
-        state, command = self._agents.supervisor.begin_task(
+        state, command = await self._agents.supervisor.begin_task(
             state,
             decision.selected_task_id,
             AgentName.CODING,
@@ -480,7 +499,7 @@ class ProjectLifecycleService:
         delivery_workspace = DeliveryWorkspace(str(aggregate.workspace.workspace_dir))
         
         _emit_sync(project_id, "delivery.started", {})
-        prepared_result = self._agents.delivery.prepare(delivery_request, delivery_workspace)
+        prepared_result = await self._agents.delivery.prepare(delivery_request, delivery_workspace)
         
         if prepared_result.delivery_status != "prepared":
             return await self.record_delivery_result(project_id, prepared_result)
@@ -536,6 +555,8 @@ class ProjectLifecycleService:
         domain = aggregate.analysis_artifact.result.domain.primary_domain
         tech_stack = [tc.technology for tc in aggregate.analysis_artifact.result.technology_constraints]
         
+        _emit_sync(aggregate.project_id, "memory.ingestion.started", {"domain": domain})
+        
         # Ingest Architecture Pattern
         arch = aggregate.planning_artifact.result.architecture
         arch_record = MemoryRecord(
@@ -564,3 +585,5 @@ class ProjectLifecycleService:
             created_at=time.time(),
         )
         manager.store(outcome_record)
+        
+        _emit_sync(aggregate.project_id, "memory.ingestion.completed", {"count": 2})

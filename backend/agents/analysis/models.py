@@ -24,6 +24,7 @@ class AnalysisRequest(ContractModel):
 
     project_description: NonEmptyText
     technology_stack: list[NonEmptyText] = Field(min_length=1)
+    project_id: str = "unknown"
 
 
 class RequirementPriority(StrEnum):

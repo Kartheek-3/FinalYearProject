@@ -51,7 +51,7 @@ class CodingAgent:
         command = request.dispatch_command
         try:
             context = CodingContextBuilder.build(request, workspace)
-            knowledge = await self._retrieve_knowledge(command.task.description)
+            knowledge = await self._retrieve_knowledge(command.task.description, command.project_id)
             proposal = await self._propose(context, knowledge)
             ChangeValidator.validate(proposal.changes, request, workspace)
             artifacts = self._apply_changes(proposal.changes, command.task_id, workspace)
@@ -72,11 +72,13 @@ class CodingAgent:
         except Exception as exc:
             return self._failure_result(command, started_at, f"Unexpected coding failure: {exc}")
 
-    async def _retrieve_knowledge(self, query: str) -> Sequence[KnowledgeSnippet]:
+    async def _retrieve_knowledge(self, query: str, project_id: str) -> Sequence[KnowledgeSnippet]:
         if self.knowledge_retriever is None:
             return ()
         try:
-            return await self.knowledge_retriever.retrieve(query=query, limit=5)
+            return await self.knowledge_retriever.retrieve(
+                query=query, limit=5, project_id=project_id, agent="coding"
+            )
         except Exception as exc:
             raise CodingProviderError("Coding knowledge retrieval failed; no changes were applied.") from exc
 

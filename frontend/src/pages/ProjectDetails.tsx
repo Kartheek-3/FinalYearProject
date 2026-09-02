@@ -11,6 +11,7 @@ import SupervisorPanel from '../components/SupervisorPanel';
 import ArtifactExplorer from '../components/ArtifactExplorer';
 import QAInspector from '../components/QAInspector';
 import DeploymentPanel from '../components/DeploymentPanel';
+import OrganizationalMemoryPanel from '../components/OrganizationalMemoryPanel';
 
 type Tab = 'overview' | 'tasks' | 'artifacts' | 'qa' | 'deployment';
 
@@ -173,6 +174,10 @@ export default function ProjectDetails() {
       </div>
 
       <SupervisorPanel executionState={project.execution_state || undefined} />
+      
+      <div style={{ height: '250px', borderTop: '1px solid var(--panel-border)' }}>
+        <OrganizationalMemoryPanel projectId={projectId} />
+      </div>
 
       {(actionLoading || pipelineStatus) && (
         <div className="loading-overlay">

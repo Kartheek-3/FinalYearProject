@@ -50,7 +50,7 @@ def build_agent_bundle(registry: ModelClientRegistry) -> AgentBundle:
             model_config=planning_settings.llm,
             knowledge_retriever=retriever
         ),
-        supervisor=SupervisorOrchestrator(),
+        supervisor=SupervisorOrchestrator(knowledge_retriever=retriever),
         coding=CodingAgent(
             llm_client=registry.create(coding_settings.llm), 
             model_config=coding_settings.llm,
@@ -59,7 +59,8 @@ def build_agent_bundle(registry: ModelClientRegistry) -> AgentBundle:
         qa=QAAgent(
             code_review_provider=LLMCodeReviewProvider(
                 registry.create(qa_settings.llm), qa_settings.llm
-            )
+            ),
+            knowledge_retriever=retriever
         ),
-        delivery=DeliveryAgent(),
+        delivery=DeliveryAgent(knowledge_retriever=retriever),
     )

@@ -181,6 +181,8 @@ class PlanningDesignAgent:
                     f"{request.analysis_artifact.result.project_summary}"
                 ),
                 limit=5,
+                project_id=request.project_id,
+                agent="planning",
             )
         except Exception as exc:
             raise PlanningKnowledgeRetrievalError(
@@ -281,6 +283,7 @@ class PlanningDesignAgent:
                 validator=lambda r: PlanningSectionTraceability.model_validate(r),
                 max_attempts=3,
             )
+            _emit_sync(request.project_id, "planning.section.completed", {"section": "Traceability"})
             
             assembled = {
                 **foundation.model_dump(),

@@ -142,6 +142,27 @@ def create_app(registry: ModelClientRegistry | None = None) -> FastAPI:
         except CompositionError as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
+    @app.get("/projects/{project_id}/files")
+    async def get_files(project_id: str) -> list[str]:
+        try:
+            aggregate = await lifecycle.get_project(project_id)
+            workspace = lifecycle._provisioner.open(aggregate.workspace)
+            return workspace.inspect_structure()
+        except CompositionError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    @app.get("/projects/{project_id}/files/{path:path}")
+    async def get_file_content(project_id: str, path: str) -> dict:
+        try:
+            aggregate = await lifecycle.get_project(project_id)
+            workspace = lifecycle._provisioner.open(aggregate.workspace)
+            content = workspace.read_file(path).content
+            return {"path": path, "content": content}
+        except CompositionError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
     from backend.memory import get_memory_manager
 
     @app.get("/memory/stats")

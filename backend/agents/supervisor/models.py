@@ -195,3 +195,4 @@ class AgentDispatchCommand(SupervisorModel):
     planning_artifact: PlanningArtifact
     related_artifacts: list[ArtifactReference] = Field(default_factory=list)
     rework_feedback: list[QAFeedback] = Field(default_factory=list)
+    related_knowledge: list[dict] = Field(default_factory=list)
