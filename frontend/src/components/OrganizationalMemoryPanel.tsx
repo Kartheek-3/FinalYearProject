@@ -38,16 +38,26 @@ export default function OrganizationalMemoryPanel({ projectId }: { projectId?: s
 
   useEffect(() => {
     if (!projectId) return;
-    const ws = new WebSocket(api.getWebSocketUrl(projectId));
-    ws.onmessage = (e) => {
-      try {
-        const event = JSON.parse(e.data);
-        if (event.event_type.startsWith('memory.')) {
-          setLiveEvents(prev => [event, ...prev].slice(0, 50));
-        }
-      } catch (err) {}
+    let ws: WebSocket | null = null;
+    let active = true;
+
+    api.getWebSocketUrl(projectId).then(url => {
+      if (!active) return;
+      ws = new WebSocket(url);
+      ws.onmessage = (e) => {
+        try {
+          const event = JSON.parse(e.data);
+          if (event.event_type.startsWith('memory.')) {
+            setLiveEvents(prev => [event, ...prev].slice(0, 50));
+          }
+        } catch (err) {}
+      };
+    }).catch(console.error);
+
+    return () => {
+      active = false;
+      if (ws) ws.close();
     };
-    return () => ws.close();
   }, [projectId]);
 
   return (

@@ -68,6 +68,7 @@ class ProjectAggregate(CompositionModel):
     """The composition-layer owner of a single project lifecycle and identity."""
 
     project_id: NonEmptyText
+    owner_id: str | None = None
     project_input: ProjectInput
     workspace: ProjectWorkspaceReference
     analysis_artifact: AnalysisArtifact | None = None
@@ -78,3 +79,4 @@ class ProjectAggregate(CompositionModel):
     quality_gates: list[TaskQualityGate] = Field(default_factory=list)
     delivery_result: DeliveryResult | None = None
     lifecycle: LifecycleMetadata = Field(default_factory=LifecycleMetadata)
+

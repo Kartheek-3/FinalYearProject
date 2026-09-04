@@ -14,9 +14,23 @@ class PortAllocator:
 
     def allocate(self) -> int:
         """Finds an unused port in the configured range and reserves it."""
+        # Find ports currently bound by Docker containers
+        docker_used_ports: set[int] = set()
+        try:
+            import docker
+            client = docker.from_env()
+            for c in client.containers.list():
+                for port_mappings in (c.ports or {}).values():
+                    if port_mappings:
+                        for m in port_mappings:
+                            if "HostPort" in m and m["HostPort"]:
+                                docker_used_ports.add(int(m["HostPort"]))
+        except Exception:
+            pass
+
         with self._lock:
             for port in range(self.port_min, self.port_max + 1):
-                if port in self._reserved_ports:
+                if port in self._reserved_ports or port in docker_used_ports:
                     continue
                 if self._is_port_available(port):
                     self._reserved_ports.add(port)
@@ -30,10 +44,11 @@ class PortAllocator:
 
     @staticmethod
     def _is_port_available(port: int) -> bool:
-        """Checks if the port is currently available on the host."""
+        """Checks if the port is currently available on all host interfaces."""
         with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as sock:
             try:
-                sock.bind(("127.0.0.1", port))
+                # Docker on Windows binds on 0.0.0.0 and SO_REUSEADDR can sometimes mask it
+                sock.bind(("0.0.0.0", port))
                 return True
             except OSError:
                 return False

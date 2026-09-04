@@ -14,6 +14,7 @@ class ProjectRepository(Protocol):
     async def get(self, project_id: str) -> ProjectAggregate: ...
     async def update(self, aggregate: ProjectAggregate) -> ProjectAggregate: ...
     async def delete(self, project_id: str) -> None: ...
+    async def list_all(self) -> list[ProjectAggregate]: ...
 
 
 import json
@@ -88,3 +89,8 @@ class InMemoryProjectRepository:
                 raise ProjectNotFoundError(f"Project not found: '{project_id}'.")
             del self._projects[key]
             self._save()
+
+    async def list_all(self) -> list[ProjectAggregate]:
+        async with self._lock:
+            self._load()
+            return list(self._projects.values())

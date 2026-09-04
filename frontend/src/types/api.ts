@@ -229,6 +229,7 @@ export interface DeliveryResult {
 
 export interface ProjectAggregate {
   project_id: string;
+  owner_id?: string | null;
   project_input: ProjectInput;
   workspace: { project_id: string; relative_path: string };
   analysis_artifact?: AnalysisArtifact | null;

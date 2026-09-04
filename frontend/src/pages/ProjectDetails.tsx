@@ -43,24 +43,34 @@ export default function ProjectDetails() {
     fetchProject();
     
     if (!projectId) return;
-    const ws = new WebSocket(api.getWebSocketUrl(projectId));
-    ws.onmessage = (e) => {
-      try {
-        const event: RuntimeEvent = JSON.parse(e.data);
-        setLiveEvents(prev => [...prev, event]);
-        
-        if (event.event_type === 'agent.started') setPipelineStatus(`Agent running: ${event.data.agent}`);
-        if (event.event_type === 'planning.section.started') setPipelineStatus(`Planning: ${event.data.section}`);
-        if (event.event_type === 'qa.started') setPipelineStatus(`QA testing task: ${event.data.task_id}`);
-        if (event.event_type === 'docker.started') setPipelineStatus(`Deploying container...`);
-        if (event.event_type === 'runtime.completed') setPipelineStatus('');
-        
-        if (['agent.completed', 'task.completed', 'qa.completed', 'qa.failed', 'docker.healthy', 'runtime.completed'].includes(event.event_type)) {
-          fetchProject();
-        }
-      } catch (err) {}
+    let ws: WebSocket | null = null;
+    let active = true;
+
+    api.getWebSocketUrl(projectId).then(url => {
+      if (!active) return;
+      ws = new WebSocket(url);
+      ws.onmessage = (e) => {
+        try {
+          const event: RuntimeEvent = JSON.parse(e.data);
+          setLiveEvents(prev => [...prev, event]);
+          
+          if (event.event_type === 'agent.started') setPipelineStatus(`Agent running: ${event.data.agent}`);
+          if (event.event_type === 'planning.section.started') setPipelineStatus(`Planning: ${event.data.section}`);
+          if (event.event_type === 'qa.started') setPipelineStatus(`QA testing task: ${event.data.task_id}`);
+          if (event.event_type === 'docker.started') setPipelineStatus(`Deploying container...`);
+          if (event.event_type === 'runtime.completed') setPipelineStatus('');
+          
+          if (['agent.completed', 'task.completed', 'qa.completed', 'qa.failed', 'docker.healthy', 'runtime.completed'].includes(event.event_type)) {
+            fetchProject();
+          }
+        } catch (err) {}
+      };
+    }).catch(console.error);
+
+    return () => {
+      active = false;
+      if (ws) ws.close();
     };
-    return () => ws.close();
   }, [projectId]);
 
   useEffect(() => {

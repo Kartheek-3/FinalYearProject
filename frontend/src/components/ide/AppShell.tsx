@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useIDEStore } from '../../store/useIDEStore';
 import TopBar from './TopBar';
@@ -7,32 +7,148 @@ import Sidebar from './Sidebar';
 import EditorWorkspace from './EditorWorkspace';
 import AgentPanel from './AgentPanel';
 import BottomPanel from './BottomPanel';
+import QuickOpen from './QuickOpen';
+import { api } from '../../services/api';
+import { getLanguageFromPath } from './FileIcons';
 
 export default function AppShell() {
   const { projectId } = useParams();
-  const { sidebarOpen, bottomPanelOpen, setProjectId, fetchProject, connectWebSocket, disconnectWebSocket, projectAggregate, agentStatus } = useIDEStore();
+  const {
+    sidebarOpen,
+    toggleSidebar,
+    bottomPanelOpen,
+    setProjectId,
+    fetchProject,
+    connectWebSocket,
+    disconnectWebSocket,
+    triggerExecution,
+    projectAggregate,
+    agentStatus,
+    openTab,
+    saveCurrentTab,
+  } = useIDEStore();
+
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('seam_sidebar_width');
+      return saved ? Math.max(220, Math.min(480, parseInt(saved, 10))) : 280;
+    } catch {
+      return 280;
+    }
+  });
+  const [isResizing, setIsResizing] = useState(false);
+  const [quickOpenOpen, setQuickOpenOpen] = useState(false);
+  const [allFiles, setAllFiles] = useState<string[]>([]);
 
   useEffect(() => {
     if (projectId) {
       setProjectId(projectId);
       fetchProject();
       connectWebSocket();
+      triggerExecution();
+      api.getFiles(projectId).then(setAllFiles).catch(console.error);
     }
     return () => {
       disconnectWebSocket();
     };
   }, [projectId]);
 
+  // Global Keyboard Shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl/Cmd + P: Quick Open
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p') {
+        e.preventDefault();
+        if (projectId) {
+          api.getFiles(projectId).then(setAllFiles).catch(console.error);
+        }
+        setQuickOpenOpen(prev => !prev);
+      }
+      // Ctrl/Cmd + B: Toggle Explorer
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') {
+        e.preventDefault();
+        toggleSidebar();
+      }
+      // Ctrl/Cmd + S: Save file
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        saveCurrentTab();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [projectId, toggleSidebar, saveCurrentTab]);
+
+  // Resizable sidebar logic
+  const handleMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizing(true);
+  };
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizing) return;
+      // ActivityBar width is 48px
+      const newWidth = Math.max(220, Math.min(480, e.clientX - 48));
+      setSidebarWidth(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      if (isResizing) {
+        setIsResizing(false);
+        localStorage.setItem('seam_sidebar_width', sidebarWidth.toString());
+      }
+    };
+
+    if (isResizing) {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+    }
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizing, sidebarWidth]);
+
+  const handleSelectQuickOpenFile = async (filePath: string) => {
+    if (!projectId) return;
+    try {
+      const data = await api.getFileContent(projectId, filePath);
+      openTab({
+        id: filePath,
+        title: filePath.split('/').pop() || filePath,
+        content: data.content,
+        language: getLanguageFromPath(filePath)
+      });
+    } catch (err) {
+      console.error(`Failed to open file ${filePath}:`, err);
+    }
+  };
+
   return (
     <div className="flex flex-col h-screen w-screen bg-background text-primaryText overflow-hidden font-sans">
-      <TopBar />
+      <TopBar onQuickOpen={() => {
+        if (projectId) {
+          api.getFiles(projectId).then(setAllFiles).catch(console.error);
+        }
+        setQuickOpenOpen(true);
+      }} />
       
       <div className="flex flex-1 overflow-hidden">
         <ActivityBar />
         
         {sidebarOpen && (
-          <div className="w-64 border-r border-border bg-panel flex flex-col shrink-0">
+          <div 
+            style={{ width: `${sidebarWidth}px` }} 
+            className="border-r border-border bg-panel flex flex-col shrink-0 relative select-none"
+          >
             <Sidebar />
+            {/* Resizer Handle */}
+            <div
+              onMouseDown={handleMouseDown}
+              className="absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-accent/50 transition-colors z-10"
+              title="Drag to resize"
+            />
           </div>
         )}
         
@@ -54,6 +170,13 @@ export default function AppShell() {
           )}
         </div>
       </div>
+
+      <QuickOpen
+        isOpen={quickOpenOpen}
+        onClose={() => setQuickOpenOpen(false)}
+        files={allFiles}
+        onSelectFile={handleSelectQuickOpenFile}
+      />
       
       {/* Status Bar */}
       <div className="h-6 bg-secondary text-secondaryText border-t border-border text-xs flex items-center px-3 justify-between select-none">

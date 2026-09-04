@@ -1,12 +1,17 @@
 {
   "activeFiles": [
-    "frontend\\src\\index.css",
-    "frontend\\src\\components\\ide\\TopBar.tsx",
-    "frontend\\src\\store\\useIDEStore.ts",
-    "frontend\\postcss.config.js",
+    "generated_projects\\prj_a27788d4fd2443a0a264b7a12965278f\\planning\\traceability.json",
+    "generated_projects\\prj_a27788d4fd2443a0a264b7a12965278f\\qa\\qa_report_task_calculate_total_backend.json",
+    "backend\\deployment\\port_allocator.py",
+    "backend\\composition\\lifecycle.py",
     "docs\\final_autonomous_ide_runtime_report.md"
   ],
-  "recentEdits": [],
+  "recentEdits": [
+    {
+      "filePath": "..\\..\\AppData\\Roaming\\Antigravity IDE\\User\\settings.json",
+      "timestamp": "2026-09-04T17:27:29.783Z"
+    }
+  ],
   "lastTerminalOutputs": [],
-  "timestamp": "2026-09-04T12:50:05.288Z"
+  "timestamp": "2026-09-04T23:11:55.385Z"
 }

@@ -129,9 +129,14 @@ class GeneratedProjectWorkspace:
             raise WorkspaceOperationError(
                 f"File changed since it was supplied to the agent: '{relative_path}'."
             )
+        previous_content = current.content
         try:
             self._resolve_relative(relative_path).write_text(content, encoding="utf-8", newline="\n")
-            _emit_sync(self._project_id, "file.updated", {"path": relative_path})
+            _emit_sync(self._project_id, "file.updated", {
+                "path": relative_path,
+                "previous_content": previous_content,
+                "new_content": content,
+            })
         except OSError as exc:
             raise WorkspaceOperationError(f"Unable to update '{relative_path}'.") from exc
 

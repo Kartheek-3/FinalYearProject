@@ -28,7 +28,7 @@ export default function ProgressPanel({ lifecycleStage, pipelineStatus, liveEven
   
   if (executionState?.tasks) {
     totalTasks = Object.keys(executionState.tasks).length;
-    completedTasks = Object.values(executionState.tasks).filter(t => t.status === 'COMPLETED').length;
+    completedTasks = Object.values(executionState.tasks).filter(t => t.status === 'completed').length;
   }
 
   liveEvents.forEach(event => {

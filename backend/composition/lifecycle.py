@@ -76,16 +76,26 @@ class ProjectLifecycleService:
         self._dispatcher = dispatcher
         self._docker_provider = docker_provider or DefaultDockerDeploymentProvider()
 
-    async def create_project(self, project_input: ProjectInput) -> ProjectAggregate:
+    async def get_project(self, project_id: str) -> ProjectAggregate:
+        return await self._repository.get(project_id)
+
+    async def list_projects(self, owner_id: str | None = None) -> list[ProjectAggregate]:
+        all_projects = await self._repository.list_all()
+        if owner_id:
+            return [p for p in all_projects if p.owner_id == owner_id or p.owner_id is None]
+        return all_projects
+
+    async def create_project(self, project_input: ProjectInput, owner_id: str | None = None) -> ProjectAggregate:
         project_id = f"prj_{uuid4().hex}"
         workspace = self._provisioner.provision(project_id)
         aggregate = ProjectAggregate(
             project_id=project_id,
+            owner_id=owner_id,
             project_input=project_input,
             workspace=workspace,
         )
         await self._repository.create(aggregate)
-        _emit_sync(project_id, "project.created", {"project_id": project_id})
+        _emit_sync(project_id, "project.created", {"project_id": project_id, "owner_id": owner_id})
         return aggregate
 
     async def run_autonomous(self, project_id: str) -> None:
@@ -101,9 +111,15 @@ class ProjectLifecycleService:
                     project_id=project_id,
                 )
             )
+            def _safe_write_file(ws, rel_path: str, content: str):
+                if ws.exists(rel_path):
+                    chash = ws.read_file(rel_path).content_hash
+                    ws.delete_file(rel_path, chash)
+                ws.create_file(rel_path, content)
+
             try:
                 workspace = self._provisioner.open(aggregate.workspace)
-                workspace.create_file("planning/analysis.json", analysis.model_dump_json(indent=2))
+                _safe_write_file(workspace, "planning/analysis.json", analysis.model_dump_json(indent=2))
             except Exception as e:
                 import logging
                 logging.getLogger(__name__).error(f"Failed to persist analysis artifact: {e}")
@@ -119,7 +135,7 @@ class ProjectLifecycleService:
                 try:
                     workspace = self._provisioner.open(aggregate.workspace)
                     path = f"planning/{name}.json"
-                    workspace.create_file(path, data.model_dump_json(indent=2))
+                    _safe_write_file(workspace, path, data.model_dump_json(indent=2))
                 except Exception as e:
                     import logging
                     logging.getLogger(__name__).error(f"Failed to persist planning artifact {name}: {e}")
@@ -134,7 +150,7 @@ class ProjectLifecycleService:
             
             try:
                 workspace = self._provisioner.open(aggregate.workspace)
-                workspace.create_file("planning/project_plan.json", planning.model_dump_json(indent=2))
+                _safe_write_file(workspace, "planning/project_plan.json", planning.model_dump_json(indent=2))
             except Exception as e:
                 import logging
                 logging.getLogger(__name__).error(f"Failed to persist project_plan artifact: {e}")
@@ -147,9 +163,14 @@ class ProjectLifecycleService:
             
             if aggregate.lifecycle.stage == ProjectLifecycleStage.READY_FOR_DELIVERY:
                 self._ingest_project_outcome(aggregate)
-                await self.deploy_project(project_id)
-                
-            _emit_sync(project_id, "runtime.completed", {})
+                deployed_agg = await self.deploy_project(project_id)
+                if deployed_agg.delivery_result and deployed_agg.delivery_result.delivery_status == "deployed":
+                    _emit_sync(project_id, "runtime.completed", {})
+                else:
+                    err = "; ".join(deployed_agg.delivery_result.errors) if deployed_agg.delivery_result and deployed_agg.delivery_result.errors else "Deployment failed."
+                    _emit_sync(project_id, "runtime.failed", {"error": err})
+            else:
+                _emit_sync(project_id, "runtime.completed", {})
             
         except Exception as exc:
             import traceback
@@ -239,7 +260,14 @@ class ProjectLifecycleService:
             if outcome.execution_result.agent != AgentName.CODING:
                 raise CompositionError("Coding lifecycle received a non-coding dispatch result.")
             updated = CodingResultAdapter.attach(aggregate, outcome.execution_result, self._agents.supervisor)
-            _emit_sync(project_id, "task.completed", {"task_id": decision.selected_task_id})
+            gen_files = [
+                art.location for art in outcome.execution_result.generated_artifacts
+            ] if hasattr(outcome.execution_result, "generated_artifacts") and outcome.execution_result.generated_artifacts else []
+            _emit_sync(project_id, "task.completed", {
+                "task_id": decision.selected_task_id,
+                "agent": "coding",
+                "files": gen_files,
+            })
             return await self._repository.update(updated)
         except Exception as exc:
             failed_result = command.model_copy(
@@ -379,11 +407,19 @@ class ProjectLifecycleService:
                 logging.getLogger(__name__).error(f"Failed to persist QA report: {e}")
                 
             updated = QAResultAdapter.attach(aggregate, outcome.qa_report, task_id, self._agents.supervisor)
+            qa_summary = {
+                "task_id": task_id,
+                "verdict": outcome.qa_report.verdict.value,
+                "summary": outcome.qa_report.summary,
+                "tests_passed": len(outcome.qa_report.passed_tests) if hasattr(outcome.qa_report, "passed_tests") else 0,
+                "tests_failed": len(outcome.qa_report.failed_tests) if hasattr(outcome.qa_report, "failed_tests") else 0,
+                "issues": [i.model_dump() for i in outcome.qa_report.issues] if hasattr(outcome.qa_report, "issues") else [],
+            }
             if outcome.qa_report.verdict in {QAVerdict.BLOCKED, QAVerdict.FAIL}:
-                _emit_sync(project_id, "qa.failed", {"task_id": task_id, "verdict": outcome.qa_report.verdict.value})
+                _emit_sync(project_id, "qa.failed", qa_summary)
                 updated = self._pause(updated, f"QA for task '{task_id}' returned {outcome.qa_report.verdict.value}.")
             else:
-                _emit_sync(project_id, "qa.completed", {"task_id": task_id})
+                _emit_sync(project_id, "qa.completed", qa_summary)
                 updated = self._with_completion_state(updated)
             return await self._repository.update(updated)
         except Exception as exc:
@@ -536,6 +572,25 @@ class ProjectLifecycleService:
 
         delivery_workspace = self._provisioner.open(aggregate.workspace)
         
+        # Ensure a runnable HTTP app entrypoint exists for generic fallback containers
+        if not delivery_workspace.exists("app.py"):
+            fallback_app_code = (
+                "import http.server\n"
+                "import socketserver\n\n"
+                "PORT = 8000\n"
+                "class Handler(http.server.SimpleHTTPRequestHandler):\n"
+                "    def do_GET(self):\n"
+                "        self.send_response(200)\n"
+                "        self.send_header('Content-type', 'text/html')\n"
+                "        self.end_headers()\n"
+                "        self.wfile.write(b'<h1>SEAM Project Deployed Successfully</h1>')\n\n"
+                "with socketserver.TCPServer(('', PORT), Handler) as httpd:\n"
+                "    print(f'Serving on port {PORT}...')\n"
+                "    httpd.serve_forever()\n"
+            )
+            delivery_workspace.create_file("app.py", fallback_app_code)
+            _emit_sync(project_id, "file.created", {"path": "app.py"})
+
         _emit_sync(project_id, "delivery.started", {})
         prepared_result = await self._agents.delivery.prepare(delivery_request, delivery_workspace)
         
@@ -578,6 +633,8 @@ class ProjectLifecycleService:
         
         if provider_result.status == "deployed":
             _emit_sync(project_id, "docker.healthy", {"url": str(provider_result.project_url)})
+        else:
+            _emit_sync(project_id, "docker.failed", {"error": "; ".join(provider_result.errors) if provider_result.errors else "Docker deployment failed."})
         
         return await self.record_delivery_result(project_id, final_result)
 

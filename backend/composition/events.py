@@ -62,6 +62,24 @@ class RuntimeEventGateway:
             if not self._queues[project_id]:
                 del self._queues[project_id]
 
+    def get_history(self, project_id: str) -> list[RuntimeEvent]:
+        """Retrieve persisted historical events for this project."""
+        events: list[RuntimeEvent] = []
+        try:
+            from pathlib import Path
+            import json
+            events_file = Path("generated_projects") / project_id / "runtime" / "events.jsonl"
+            if events_file.exists():
+                with events_file.open("r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            events.append(RuntimeEvent.model_validate_json(line))
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Failed to read events history for {project_id}: {e}")
+        return events
+
 
 # Global singleton instance for the FastAPI app
 event_gateway = RuntimeEventGateway()
