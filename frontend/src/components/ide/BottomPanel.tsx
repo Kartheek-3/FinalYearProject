@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Terminal as TerminalIcon, AlertCircle, AlignLeft, Plug2, Bot, Network, X, Server, ExternalLink } from 'lucide-react';
 import { useIDEStore } from '../../store/useIDEStore';
-import type { RuntimeEvent } from '../../types/api';
+import { api } from '../../services/api';
 import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import 'xterm/css/xterm.css';
@@ -226,9 +226,9 @@ function CheckCircle(props: any) {
 
 function TerminalView() {
   const terminalRef = useRef<HTMLDivElement>(null);
-  const { liveEvents } = useIDEStore();
+  const { projectId } = useIDEStore();
   const xtermRef = useRef<Terminal | null>(null);
-  const processedEvents = useRef(new Set<string>());
+  const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
     if (!terminalRef.current) return;
@@ -252,51 +252,59 @@ function TerminalView() {
     fitAddon.fit();
     xtermRef.current = term;
 
-    term.writeln('\x1b[1;36m$ SEAM IDE Terminal Initialized\x1b[0m\r\n');
+    let isDisposed = false;
+
+    // Connect to real sandboxed WebSocket terminal if projectId exists
+    if (projectId) {
+      api.getTerminalWebSocketUrl(projectId).then((wsUrl: string) => {
+        if (isDisposed) return;
+        const ws = new WebSocket(wsUrl);
+        wsRef.current = ws;
+
+        ws.onopen = () => {
+          fitAddon.fit();
+        };
+
+        ws.onmessage = (event) => {
+          term.write(event.data);
+        };
+
+        ws.onerror = () => {
+          term.writeln('\r\n\x1b[31m[Terminal connection error]\x1b[0m\r\n');
+        };
+
+        ws.onclose = () => {
+          term.writeln('\r\n\x1b[90m[Terminal session disconnected]\x1b[0m\r\n');
+        };
+
+        // Forward user keypresses to backend shell process
+        term.onData((data) => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(data);
+          }
+        });
+      }).catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        term.writeln(`\r\n\x1b[31m[Failed to initialize terminal: ${message}]\x1b[0m\r\n`);
+      });
+    } else {
+      term.writeln('\x1b[1;36m$ SEAM IDE Terminal Ready (No Active Project)\x1b[0m\r\n');
+    }
 
     const handleResize = () => fitAddon.fit();
     window.addEventListener('resize', handleResize);
 
     return () => {
+      isDisposed = true;
       window.removeEventListener('resize', handleResize);
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
       term.dispose();
       xtermRef.current = null;
     };
-  }, []);
-
-  useEffect(() => {
-    if (xtermRef.current && liveEvents.length > 0) {
-      const term = xtermRef.current;
-      liveEvents.forEach((event: RuntimeEvent) => {
-        const id = event.event_id || `${event.event_type}-${event.timestamp}`;
-        if (!processedEvents.current.has(id)) {
-          processedEvents.current.add(id);
-          
-          const time = new Date().toLocaleTimeString();
-          let color = '\x1b[0m';
-          if (event.event_type.includes('error') || event.event_type.includes('failed')) color = '\x1b[31m';
-          else if (event.event_type.includes('success') || event.event_type.includes('healthy')) color = '\x1b[32m';
-          else if (event.event_type.includes('started')) color = '\x1b[34m';
-          
-          term.writeln(`\x1b[90m[${time}]\x1b[0m ${color}[${event.event_type}]\x1b[0m`);
-          
-          if (event.data) {
-            try {
-              const dataStr = typeof event.data === 'string' ? event.data : JSON.stringify(event.data, null, 2);
-              dataStr.split('\n').forEach((line: string) => {
-                term.writeln(`  \x1b[37m${line}\x1b[0m`);
-              });
-            } catch (e) {}
-          }
-          
-          if (event.message) {
-             term.writeln(`  \x1b[36m> ${event.message}\x1b[0m`);
-          }
-          term.writeln('');
-        }
-      });
-    }
-  }, [liveEvents]);
+  }, [projectId]);
 
   return (
     <div className="h-full w-full p-2 pl-4 overflow-hidden" ref={terminalRef} />

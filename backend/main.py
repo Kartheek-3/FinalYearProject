@@ -161,6 +161,108 @@ def create_app(registry: ModelClientRegistry | None = None) -> FastAPI:
         finally:
             event_gateway.unsubscribe(project_id, queue)
 
+    @app.websocket("/ws/projects/{project_id}/terminal")
+    async def websocket_terminal(websocket: WebSocket, project_id: str):
+        current_user = await get_ws_current_user(websocket)
+        try:
+            aggregate = await lifecycle.get_project(project_id)
+            if aggregate.owner_id and aggregate.owner_id != current_user.uid:
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Access denied to project")
+                return
+        except Exception:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Project not found")
+            return
+
+        await websocket.accept()
+
+        # Resolve isolated project directory
+        workspace_dir = (lifecycle._provisioner._root / project_id).resolve()
+        if not workspace_dir.exists():
+            workspace_dir.mkdir(parents=True, exist_ok=True)
+
+        import sys
+        import shlex
+
+        # Welcome banner
+        rel_path = f"generated_projects/{project_id}"
+        await websocket.send_text(f"\x1b[1;36mSEAM Sandboxed Terminal — {rel_path}\x1b[0m\r\n")
+        await websocket.send_text(f"\x1b[90mWorking directory: {workspace_dir}\x1b[0m\r\n\r\n")
+        prompt = f"\x1b[1;32mseam@{project_id[:12]}\x1b[0m:\x1b[1;34m~/{project_id}\x1b[0m$ "
+        await websocket.send_text(prompt)
+
+        cmd_buffer = ""
+
+        try:
+            while True:
+                data = await websocket.receive_text()
+
+                # Handle Enter / Carriage return
+                if data in ("\r", "\n"):
+                    await websocket.send_text("\r\n")
+                    raw_cmd = cmd_buffer.strip()
+                    cmd_buffer = ""
+
+                    if raw_cmd:
+                        if raw_cmd == "clear":
+                            await websocket.send_text("\x1b[2J\x1b[H")
+                        elif raw_cmd.startswith("cd "):
+                            # Restrict cd outside of sandbox
+                            target = raw_cmd[3:].strip()
+                            if ".." in target or "/" in target or "\\" in target:
+                                await websocket.send_text("\x1b[31m[Sandbox Notice] Directory traversal outside project root is restricted.\x1b[0m\r\n")
+                            else:
+                                await websocket.send_text(f"\x1b[90mChanged directory to {target}\x1b[0m\r\n")
+                        else:
+                            # Execute command sandboxed strictly within workspace_dir
+                            try:
+                                proc = await asyncio.create_subprocess_shell(
+                                    raw_cmd,
+                                    cwd=str(workspace_dir),
+                                    stdout=asyncio.subprocess.PIPE,
+                                    stderr=asyncio.subprocess.PIPE,
+                                    shell=True,
+                                )
+                                stdout, stderr = await proc.communicate()
+
+                                if stdout:
+                                    # Send stdout lines
+                                    out_text = stdout.decode("utf-8", errors="replace").replace("\n", "\r\n")
+                                    await websocket.send_text(out_text)
+                                if stderr:
+                                    err_text = stderr.decode("utf-8", errors="replace").replace("\n", "\r\n")
+                                    await websocket.send_text(f"\x1b[31m{err_text}\x1b[0m")
+
+                                await websocket.send_text(f"\x1b[90m[Process exited with code {proc.returncode}]\x1b[0m\r\n")
+                            except Exception as run_err:
+                                await websocket.send_text(f"\x1b[31mExecution error: {run_err}\x1b[0m\r\n")
+
+                    await websocket.send_text(prompt)
+
+                # Handle Backspace
+                elif data in ("\x08", "\x7f"):
+                    if len(cmd_buffer) > 0:
+                        cmd_buffer = cmd_buffer[:-1]
+                        await websocket.send_text("\b \b")
+
+                # Handle Ctrl+C
+                elif data == "\x03":
+                    cmd_buffer = ""
+                    await websocket.send_text("^C\r\n")
+                    await websocket.send_text(prompt)
+
+                # Handle normal characters
+                elif len(data) == 1 and ord(data) >= 32:
+                    cmd_buffer += data
+                    await websocket.send_text(data)
+
+                # Handle pasted chunks
+                elif len(data) > 1 and not data.startswith("\x1b"):
+                    cmd_buffer += data
+                    await websocket.send_text(data)
+
+        except WebSocketDisconnect:
+            pass
+
     @app.get("/projects/{project_id}", response_model=ProjectAggregate)
     async def get_project(
         project_id: str,

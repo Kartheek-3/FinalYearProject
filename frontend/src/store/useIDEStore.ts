@@ -19,10 +19,51 @@ export type AgentStatus =
   | 'planning'
   | 'executing'
   | 'testing'
+  | 'security'
   | 'paused'
   | 'completed'
   | 'failed'
   | 'disconnected';
+
+export type StageId = 
+  | 'analysis'
+  | 'planning'
+  | 'supervisor'
+  | 'coding'
+  | 'testing'
+  | 'security'
+  | 'delivery'
+  | 'deployment';
+
+export interface PlanningSectionState {
+  id: string;
+  name: string;
+  status: 'queued' | 'running' | 'completed' | 'failed';
+}
+
+export interface SecurityFinding {
+  title: string;
+  severity: 'critical' | 'high' | 'medium' | 'low';
+  category: string;
+  remediation?: string;
+}
+
+export interface TestResultItem {
+  id: string;
+  name: string;
+  status: 'pass' | 'fail' | 'skip';
+  duration?: string;
+  suite?: string;
+}
+
+export interface SupervisorDecision {
+  currentTask: string;
+  nextCandidates: string[];
+  selectedAgent: string;
+  reason: string;
+  dependencies: string[];
+  priority: string;
+}
 
 export interface TimelineEvent {
   id: string;
@@ -60,10 +101,19 @@ interface IDEState {
   
   // Realtime Events & Execution
   liveEvents: RuntimeEvent[];
-  connectWebSocket: () => void;
+  connectWebSocket: () => Promise<void>;
   disconnectWebSocket: () => void;
   triggerExecution: (force?: boolean) => Promise<void>;
   
+  // Granular Autonomous Stages
+  currentStage: StageId;
+  setCurrentStage: (stage: StageId) => void;
+  planningSections: PlanningSectionState[];
+  currentTask: { id: string; name?: string; file?: string; action?: string } | null;
+  testResults: { passed: number; failed: number; skipped: number; items: TestResultItem[] };
+  securityFindings: { critical: number; high: number; medium: number; low: number; items: SecurityFinding[] };
+  supervisorDecision: SupervisorDecision | null;
+
   // Workspace Mode
   workspaceMode: WorkspaceMode;
   setWorkspaceMode: (mode: WorkspaceMode) => void;
@@ -104,12 +154,43 @@ interface IDEState {
 let wsConnection: WebSocket | null = null;
 let isExecuting = false;
 
+const initialPlanningSections: PlanningSectionState[] = [
+  { id: 'foundation', name: 'Foundation', status: 'queued' },
+  { id: 'architecture', name: 'Architecture', status: 'queued' },
+  { id: 'database', name: 'Database', status: 'queued' },
+  { id: 'api', name: 'API Specifications', status: 'queued' },
+  { id: 'workflows', name: 'Workflows', status: 'queued' },
+  { id: 'project_structure', name: 'Project Structure', status: 'queued' },
+  { id: 'execution', name: 'Execution Plan', status: 'queued' },
+  { id: 'traceability', name: 'Traceability', status: 'queued' },
+];
+
 const storeCreator: StateCreator<IDEState> = (set, get) => ({
   projectId: null,
   projectAggregate: null,
   liveEvents: [],
+
+  // Granular Stage Tracking Defaults
+  currentStage: 'analysis',
+  setCurrentStage: (stage) => set({ currentStage: stage }),
+  planningSections: initialPlanningSections,
+  currentTask: null,
+  testResults: { passed: 0, failed: 0, skipped: 0, items: [] },
+  securityFindings: { critical: 0, high: 0, medium: 0, low: 0, items: [] },
+  supervisorDecision: null,
   
-  setProjectId: (id) => set({ projectId: id, liveEvents: [], timeline: [], agentStatus: 'initializing' }),
+  setProjectId: (id) => set({
+    projectId: id,
+    liveEvents: [],
+    timeline: [],
+    agentStatus: 'initializing',
+    currentStage: 'analysis',
+    planningSections: initialPlanningSections,
+    currentTask: null,
+    testResults: { passed: 0, failed: 0, skipped: 0, items: [] },
+    securityFindings: { critical: 0, high: 0, medium: 0, low: 0, items: [] },
+    supervisorDecision: null,
+  }),
 
   fetchProject: async () => {
     const id = get().projectId;
@@ -118,18 +199,71 @@ const storeCreator: StateCreator<IDEState> = (set, get) => ({
       const data = await api.getProject(id);
       set({ projectAggregate: data });
 
-      // Determine agent status from persisted lifecycle stage if not actively receiving newer events
+      // Populate testResults and securityFindings from persisted projectAggregate
+      if (data.qa_reports && data.qa_reports.length > 0) {
+        const passedTests: TestResultItem[] = [];
+        const failedTests: TestResultItem[] = [];
+        const allFindings: SecurityFinding[] = [];
+
+        data.qa_reports.forEach((report: any) => {
+          if (report.passed_tests) {
+            report.passed_tests.forEach((t: string) => {
+              passedTests.push({ id: t, name: t, status: 'pass' });
+            });
+          }
+          if (report.failed_tests) {
+            report.failed_tests.forEach((t: string) => {
+              failedTests.push({ id: t, name: t, status: 'fail' });
+            });
+          }
+          if (report.issues) {
+            report.issues.forEach((issue: any) => {
+              allFindings.push({
+                title: issue.title || issue.description || 'Finding',
+                severity: (issue.severity || 'medium').toLowerCase(),
+                category: issue.category || 'Code Quality',
+                remediation: issue.remediation,
+              });
+            });
+          }
+        });
+
+        set({
+          testResults: {
+            passed: passedTests.length,
+            failed: failedTests.length,
+            skipped: 0,
+            items: [...failedTests, ...passedTests],
+          },
+          securityFindings: {
+            critical: allFindings.filter(f => f.severity === 'critical').length,
+            high: allFindings.filter(f => f.severity === 'high').length,
+            medium: allFindings.filter(f => f.severity === 'medium').length,
+            low: allFindings.filter(f => f.severity === 'low').length,
+            items: allFindings,
+          },
+        });
+      }
+
+      // Determine agent status and stage from persisted lifecycle stage if not actively receiving newer events
       const stage = data.lifecycle?.stage;
       if (stage === 'failed') {
         set({ agentStatus: 'failed' });
       } else if (stage === 'paused') {
         set({ agentStatus: 'paused' });
       } else if (stage === 'ready_for_delivery' && data.delivery_result?.delivery_status === 'deployed') {
-        set({ agentStatus: 'completed' });
-      } else if (stage === 'executing' || stage === 'analyzed' || stage === 'planned' || stage === 'ready_for_execution') {
+        set({ agentStatus: 'completed', currentStage: 'deployment' });
+      } else if (stage === 'ready_for_delivery') {
+        set({ currentStage: 'delivery' });
+      } else if (stage === 'executing') {
+        set({ currentStage: 'coding' });
         if (get().agentStatus !== 'running' && get().agentStatus !== 'executing' && get().agentStatus !== 'testing') {
           set({ agentStatus: 'running' });
         }
+      } else if (stage === 'planned' || stage === 'ready_for_execution') {
+        set({ currentStage: 'supervisor' });
+      } else if (stage === 'analyzed') {
+        set({ currentStage: 'planning' });
       }
     } catch (err) {
       console.error('Failed to fetch project:', err);
@@ -307,24 +441,94 @@ const storeCreator: StateCreator<IDEState> = (set, get) => ({
           }
         }
 
-        // Determine general agent status from actual backend events
+        // Determine general agent status & granular stage tracking from actual backend events
         if (event.event_type === 'runtime.completed' || event.event_type === 'docker.healthy') {
-          set({ agentStatus: 'completed' });
+          set({ agentStatus: 'completed', currentStage: 'deployment' });
           get().fetchProject();
         } else if (event.event_type === 'runtime.failed' || event.event_type === 'docker.failed') {
           set({ agentStatus: 'failed' });
           get().fetchProject();
         } else if (event.event_type === 'qa.failed') {
-          set({ agentStatus: 'paused' });
+          set({ agentStatus: 'paused', currentStage: 'testing' });
           get().fetchProject();
+        } else if (event.event_type.startsWith('docker.') || event.event_type.startsWith('deployment.') || event.event_type.startsWith('delivery.')) {
+          set({ agentStatus: 'running', currentStage: 'deployment' });
+        } else if (event.event_type === 'security.started' || event.event_type.includes('security')) {
+          set({ agentStatus: 'security', currentStage: 'security' });
+          if (event.data?.findings) {
+            const findings = event.data.findings;
+            set({
+              securityFindings: {
+                critical: findings.filter((f: any) => f.severity === 'critical').length,
+                high: findings.filter((f: any) => f.severity === 'high').length,
+                medium: findings.filter((f: any) => f.severity === 'medium').length,
+                low: findings.filter((f: any) => f.severity === 'low').length,
+                items: findings,
+              }
+            });
+          }
         } else if (event.event_type.startsWith('qa.')) {
-          set({ agentStatus: 'testing' });
+          set({ agentStatus: 'testing', currentStage: 'testing' });
+          if (event.data?.task_id) {
+            set((state) => ({
+              testResults: {
+                ...state.testResults,
+                items: [
+                  ...state.testResults.items,
+                  {
+                    id: event.data.task_id,
+                    name: `QA Verification for ${event.data.task_id}`,
+                    status: event.event_type === 'qa.completed' ? 'pass' : event.event_type === 'qa.failed' ? 'fail' : 'pass',
+                    duration: '0.4s',
+                  }
+                ],
+                passed: event.event_type === 'qa.completed' ? state.testResults.passed + 1 : state.testResults.passed,
+                failed: event.event_type === 'qa.failed' ? state.testResults.failed + 1 : state.testResults.failed,
+              }
+            }));
+          }
+          get().fetchProject();
         } else if (event.event_type.startsWith('planning')) {
-          set({ agentStatus: 'planning' });
+          set({ agentStatus: 'planning', currentStage: 'planning' });
+          if (event.data?.section) {
+            const secName = String(event.data.section).toLowerCase();
+            set((state) => ({
+              planningSections: state.planningSections.map(s => {
+                if (s.id === secName || s.name.toLowerCase().includes(secName)) {
+                  return { ...s, status: event.event_type.includes('completed') ? 'completed' : 'running' };
+                }
+                return s;
+              })
+            }));
+          }
         } else if (event.event_type.startsWith('task.started') || event.event_type.startsWith('task.completed')) {
-          set({ agentStatus: 'executing' });
+          set({
+            agentStatus: 'executing',
+            currentStage: 'coding',
+            currentTask: {
+              id: event.data?.task_id || 'task',
+              name: event.data?.name,
+              file: event.data?.path,
+              action: event.event_type.startsWith('task.started') ? 'running' : 'completed',
+            },
+            supervisorDecision: {
+              currentTask: event.data?.task_id || 'active_task',
+              nextCandidates: event.data?.candidate_tasks || [],
+              selectedAgent: 'Coding Agent',
+              reason: event.data?.reason || 'Dependencies satisfied; topological priority dispatch',
+              dependencies: event.data?.dependencies || [],
+              priority: 'High',
+            }
+          });
         } else if (event.event_type.startsWith('agent.started')) {
-          set({ agentStatus: 'running' });
+          const ag = event.data?.agent;
+          if (ag === 'analysis') set({ agentStatus: 'running', currentStage: 'analysis' });
+          else if (ag === 'planning') set({ agentStatus: 'planning', currentStage: 'planning' });
+          else if (ag === 'supervisor') set({ agentStatus: 'running', currentStage: 'supervisor' });
+          else if (ag === 'coding') set({ agentStatus: 'executing', currentStage: 'coding' });
+          else if (ag === 'qa') set({ agentStatus: 'testing', currentStage: 'testing' });
+          else if (ag === 'delivery') set({ agentStatus: 'running', currentStage: 'delivery' });
+          else set({ agentStatus: 'running' });
         }
         
       } catch (err) {

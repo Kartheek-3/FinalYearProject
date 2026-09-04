@@ -63,6 +63,13 @@ export const api = {
     return `${wsBase}/ws/projects/${id}/runtime${tokenParam}`;
   },
 
+  getTerminalWebSocketUrl: async (id: string): Promise<string> => {
+    const wsBase = API_BASE.replace(/^http/, 'ws');
+    const token = await authService.getIdToken();
+    const tokenParam = token ? `?token=${encodeURIComponent(token)}` : '';
+    return `${wsBase}/ws/projects/${id}/terminal${tokenParam}`;
+  },
+
   getFiles: (id: string): Promise<string[]> =>
     authFetch(`${API_BASE}/projects/${id}/files`).then(handleResponse),
 

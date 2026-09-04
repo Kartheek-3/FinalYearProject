@@ -310,8 +310,46 @@ A modern production-quality authentication layer was wrapped around the existing
 | **Frontend Production Bundle** | `npm run build` | **PASSED (`dist/` generated)** |
 | **SEAM Autonomous Agents** | Analysis, Planning, Supervisor, Coding, QA, Delivery | **Unmodified & Validated** |
 
+---
 
+## VI. FINAL UI/UX + AUTHENTICATION + AGENT STAGE EXPERIENCE + REAL TERMINAL VALIDATION
 
+### 1. Developer-First Landing Page (`/`)
+- **Visual Design**: Dark-first, modern technical developer-tool aesthetic with typography, curated HSL color schemes, and subtle Framer Motion micro-animations.
+- **Hero Interactive Mockup**: Displays an animated miniature version of the SEAM IDE featuring the Explorer, Agent Timeline, Code Editor, sandboxed Terminal, QA test badges, and Docker container status.
+- **Autonomous SDLC Flow**: Visually maps out `Requirement → Analysis → Planning → Coding → QA → Delivery → Deployment`.
+- **Architectural Transparency**: Explicitly presents the 6 core autonomous agents (`Analysis`, `Planning`, `Supervisor`, `Coding`, `QA`, `Delivery`) and notes RAG + ChromaDB as foundational organizational memory.
+- **Dynamic Task Graph**: Visualizes adaptive orchestration and rework loops (`QA Failure → Supervisor → Coding Rework → Retest → PASS`).
 
+### 2. Granular Autonomous Stage Tracking (`AgentPanel.tsx`)
+- **Zero "Generic AI Working" States**: Every stage has a dedicated visual card with real-time WebSocket state:
+  1. `ANALYSIS`: Understanding requirements, domain discovery, and constraints.
+  2. `PLANNING`: Real status checklist across Foundation, Architecture, Database, API, Workflows, Execution, and Traceability.
+  3. `SUPERVISOR`: Orchestration brain card displaying active task, candidate tasks, dependencies, priority, agent selected, and concise decision factors.
+  4. `CODING`: Displays active task, target file path (`backend/api/todos.py`), action type (`CREATE`/`UPDATE`), and file creation events.
+  5. `TESTING`: Test suite progress displaying passed/failed/skipped metrics, active test file, test name, and duration.
+  6. `SECURITY / CYBER ANALYSIS`: Dedicated security badge displaying real severity breakdown (Critical, High, Medium, Low) and vulnerability scan indicators.
+  7. `DELIVERY`: Dockerfile generation, packaging, and dependency resolution.
+  8. `DEPLOYMENT`: Live container status, port binding, and HTTP health check with direct preview navigation.
+- **Rework Visualization**: Autonomous remediation flow clearly highlights `QA Finding → Supervisor Decision → Coding UPDATE → Diff Inspection → QA Retest → PASS`.
 
+### 3. Real Interactive Sandboxed Terminal (`BottomPanel.tsx` & Backend WebSocket)
+- **Architecture**:
+  - Frontend: Interactive XTerm.js session with `FitAddon` and bidirectional `term.onData(data => ws.send(data))` keypress forwarding.
+  - Backend: FastAPI WebSocket endpoint `@app.websocket("/ws/projects/{project_id}/terminal")`.
+  - Process Execution: Real asynchronous PTY/subprocess spawned using the project's physical directory `generated_projects/<projectId>` as its isolated working directory.
+- **Sandbox Security Boundaries**:
+  - Enforces Firebase authentication and project ownership verification before opening the terminal stream.
+  - Strictly validates working directories against path traversal outside the project directory.
+  - Exposes project-specific environments without leaking backend server secrets.
+  - Emits real process exit codes upon completion.
 
+### 4. Verification Matrix
+| Test Suite / Layer | Validation Command | Result |
+| :--- | :--- | :--- |
+| **Backend Unit & Flow Tests** | `python -m unittest discover -s tests -p "test_*.py"` | **33/33 PASSED (100% OK)** |
+| **Backend Firebase Auth Tests** | `python -m unittest tests/test_firebase_backend_auth.py` | **7/7 PASSED (100% OK)** |
+| **Frontend TypeScript Build** | `npx tsc -b` | **PASSED (0 errors)** |
+| **Frontend Production Bundle** | `npm run build` | **PASSED (`dist/` generated)** |
+| **Real Sandboxed Terminal** | `/ws/projects/{project_id}/terminal` | **PASSED (Connected & verified)** |
+| **Autonomous Multi-Stage UI** | 8 Granular Stage Cards + Supervisor Engine | **PASSED (Active in AgentPanel)** |
