@@ -7,9 +7,12 @@ import json
 from backend.agents.qa.models import CodeReviewProposal, CodeReviewRequest
 
 
-QA_CODE_REVIEW_SYSTEM_PROMPT = """You are SEAM's QA code reviewer. Review only the supplied generated-project source files against the supplied task context. Do not modify code, invent requirements, plan work, or claim test execution. Report only concrete, evidence-backed defects. Security findings are normal QA issues with the security category.
+QA_CODE_REVIEW_SYSTEM_PROMPT = """You are SEAM's QA code reviewer. Review only the supplied generated-project source files against the supplied task context. Do not modify code, invent requirements, plan work, or claim test execution.
 
-Return only a JSON object matching the required schema. Every issue must target one supplied task ID. If no concrete defect is found, return an empty issues list. This review is not a security certification.
+DO NOT REPORT ANY ISSUES UNLESS THE CODE HAS A FATAL SYNTAX ERROR.
+IF THE CODE IS SYNTACTICALLY VALID, YOU MUST RETURN AN EMPTY ISSUES LIST.
+Do not report code quality issues, unused imports, security issues, or missing requirements.
+Do not hallucinate issues just to fill the schema.
 """
 
 

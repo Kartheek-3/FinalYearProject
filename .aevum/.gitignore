@@ -1,0 +1,16 @@
+# Aevum active session and runtime files (do not commit to Git)
+signal.json
+ack.json
+session.json
+thinking_signal.json
+bridge.log
+suggestions.json
+suggestions_*.json
+current_plan.json
+.internal/
+mcp.json
+mcp_config.json
+mcp_antigravity.json
+port-config.json
+agent_report.json
+cache/

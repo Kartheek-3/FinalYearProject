@@ -1,9 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { RuntimeEvent } from '../types/api';
 
 interface FileExplorerProps {
   projectId: string;
   onFileSelect: (path: string) => void;
   selectedFile: string | null;
+  liveEvents: RuntimeEvent[];
 }
 
 interface TreeNode {
@@ -13,38 +15,38 @@ interface TreeNode {
   children: Record<string, TreeNode>;
 }
 
-export default function FileExplorer({ projectId, onFileSelect, selectedFile }: FileExplorerProps) {
+export default function FileExplorer({ projectId, onFileSelect, selectedFile, liveEvents }: FileExplorerProps) {
   const [files, setFiles] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set(['planning', 'src']));
 
-  useEffect(() => {
-    let mounted = true;
-    
-    const fetchFiles = async () => {
-      setLoading(true);
-      try {
-        const response = await fetch(`http://localhost:8000/projects/${projectId}/files`);
-        if (response.ok && mounted) {
-          const data = await response.json();
-          setFiles(data);
-        }
-      } catch (err) {
-        console.error("Failed to fetch files", err);
-      } finally {
-        if (mounted) setLoading(false);
+  const fetchFiles = async () => {
+    setLoading(true);
+    try {
+      const response = await fetch(`http://localhost:8000/projects/${projectId}/files`);
+      if (response.ok) {
+        const data = await response.json();
+        setFiles(data);
       }
-    };
+    } catch (err) {
+      console.error("Failed to fetch files", err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
+  useEffect(() => {
     fetchFiles();
-    
-    // Poll for new files every 3 seconds during execution
-    const interval = setInterval(fetchFiles, 3000);
-    return () => {
-      mounted = false;
-      clearInterval(interval);
-    };
   }, [projectId]);
+
+  useEffect(() => {
+    if (liveEvents.length > 0) {
+      const lastEvent = liveEvents[liveEvents.length - 1];
+      if (lastEvent.event_type.startsWith('file.') || lastEvent.event_type.startsWith('folder.')) {
+        fetchFiles();
+      }
+    }
+  }, [liveEvents]);
 
   // Build tree
   const tree: TreeNode = { name: 'root', path: '', type: 'directory', children: {} };

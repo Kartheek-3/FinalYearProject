@@ -43,7 +43,7 @@ class ProjectWorkspaceProvisioner:
         self._validate_project_id(reference.project_id)
         if reference.relative_path != reference.project_id:
             raise WorkspaceProvisioningError("Workspace reference does not match its project identity.")
-        return GeneratedProjectWorkspace(self._root / reference.relative_path, self._root)
+        return GeneratedProjectWorkspace(self._root / reference.relative_path, self._root, reference.project_id)
 
     @classmethod
     def _validate_project_id(cls, project_id: str) -> None:

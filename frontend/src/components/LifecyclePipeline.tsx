@@ -25,9 +25,7 @@ export default function LifecyclePipeline({ project }: Props) {
           const isCompleted = index < currentIndex || currentStage === ProjectLifecycleStage.READY_FOR_DELIVERY;
           const isActive = index === currentIndex && currentStage !== ProjectLifecycleStage.READY_FOR_DELIVERY;
           
-          let cl = 'text-secondary';
-          if (isCompleted) cl = 'text-primary';
-          if (isActive) cl = 'text-accent'; // I'll apply style directly
+          
           
           return (
             <div key={stage.id} className="flex items-center flex-1">

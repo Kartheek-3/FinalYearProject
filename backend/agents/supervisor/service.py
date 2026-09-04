@@ -216,7 +216,7 @@ class SupervisorOrchestrator:
             self._execution_record(result, transition)
         ]
         updated = updated.model_copy(update={"execution_records": record, "updated_at": self._now()})
-        return self._with_project_status(updated)
+        return self._with_project_status(self.refresh_eligibility(updated))
 
     def record_qa_feedback(
         self,
@@ -254,7 +254,7 @@ class SupervisorOrchestrator:
             updated = updated.model_copy(
                 update={"iteration": updated.iteration + 1, "updated_at": self._now()}
             )
-        return self._with_project_status(updated)
+        return self._with_project_status(self.refresh_eligibility(updated))
 
     def _transition(
         self,

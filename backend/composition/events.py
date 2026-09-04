@@ -31,6 +31,21 @@ class RuntimeEventGateway:
         if event.project_id in self._queues:
             for q in self._queues[event.project_id]:
                 await q.put(event)
+                
+        # Persist event to the project's runtime directory
+        try:
+            import os
+            from pathlib import Path
+            workspace_dir = Path("generated_projects") / event.project_id
+            if workspace_dir.exists():
+                runtime_dir = workspace_dir / "runtime"
+                runtime_dir.mkdir(parents=True, exist_ok=True)
+                events_file = runtime_dir / "events.jsonl"
+                with events_file.open("a", encoding="utf-8") as f:
+                    f.write(event.model_dump_json() + "\n")
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Failed to persist event {event.event_type}: {e}")
 
     def subscribe(self, project_id: str) -> asyncio.Queue[RuntimeEvent]:
         """Subscribe to events for a specific project."""

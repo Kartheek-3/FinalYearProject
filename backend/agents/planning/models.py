@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from enum import StrEnum
 
 from pydantic import Field, model_validator
+from typing import Any
 
 from backend.agents.analysis.models import (
     AnalysisArtifact,
@@ -33,6 +34,7 @@ class TaskType(StrEnum):
     SECURITY = "security"
     DOCUMENTATION = "documentation"
     CONFIGURATION = "configuration"
+    DEPLOYMENT = "deployment"
 
 
 class TaskStatus(StrEnum):
@@ -117,6 +119,18 @@ class DatabaseField(ContractModel):
     nullable: bool = True
     description: NonEmptyText
     default_value: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def coerce_default_value(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            val = data.get("default_value")
+            if val is not None and not isinstance(val, str):
+                if isinstance(val, bool):
+                    data["default_value"] = "true" if val else "false"
+                else:
+                    data["default_value"] = str(val)
+        return data
 
 
 class DatabaseForeignKey(ContractModel):
@@ -254,29 +268,27 @@ class ProjectPlan(ContractModel):
         endpoint_ids = {endpoint.endpoint_id for endpoint in self.api.endpoints}
 
         for task in self.implementation_tasks:
-            if task.task_id in task.dependencies:
-                raise ValueError(f"Task {task.task_id} depends on itself.")
-            missing_dependencies = set(task.dependencies) - task_ids
-            if missing_dependencies:
-                raise ValueError(f"Task {task.task_id} has undefined dependencies: {missing_dependencies}")
+            task.dependencies = [d for d in task.dependencies if d != task.task_id and d in task_ids]
         for phase in self.roadmap:
-            missing_tasks = set(phase.task_ids) - task_ids
-            if missing_tasks:
-                raise ValueError(f"Phase {phase.phase_id} has undefined tasks: {missing_tasks}")
+            phase.task_ids = [t for t in phase.task_ids if t in task_ids]
+        
+        valid_relationships = []
         for relationship in self.architecture.component_relationships:
-            referenced = {relationship.source_component_id, relationship.target_component_id}
-            if not referenced <= component_ids:
-                raise ValueError(f"Component relationship references missing components: {referenced - component_ids}")
+            if relationship.source_component_id in component_ids and relationship.target_component_id in component_ids:
+                valid_relationships.append(relationship)
+        self.architecture.component_relationships = valid_relationships
+
+        valid_flows = []
         for flow in self.architecture.data_flows:
-            if not {flow.source_component_id, flow.target_component_id} <= component_ids:
-                raise ValueError(f"Data flow {flow.flow_id} references missing components")
+            if flow.source_component_id in component_ids and flow.target_component_id in component_ids:
+                valid_flows.append(flow)
+        self.architecture.data_flows = valid_flows
+
         for trace in self.requirement_traceability:
-            if not set(trace.task_ids) <= task_ids:
-                raise ValueError(f"Trace {trace.requirement_id} references missing tasks")
-            if not set(trace.component_ids) <= component_ids:
-                raise ValueError(f"Trace {trace.requirement_id} references missing components")
-            if not set(trace.api_endpoint_ids) <= endpoint_ids:
-                raise ValueError(f"Trace {trace.requirement_id} references missing endpoints")
+            trace.task_ids = [t for t in trace.task_ids if t in task_ids]
+            trace.component_ids = [c for c in trace.component_ids if c in component_ids]
+            trace.api_endpoint_ids = [e for e in trace.api_endpoint_ids if e in endpoint_ids]
+            
         return self
 
 

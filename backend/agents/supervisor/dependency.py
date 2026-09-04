@@ -23,6 +23,6 @@ class DependencyEvaluator:
         return sorted(
             task_id
             for task_id, task_state in state.tasks.items()
-            if task_state.status == TaskExecutionStatus.READY
+            if task_state.status in (TaskExecutionStatus.READY, TaskExecutionStatus.REWORK_REQUIRED)
             and cls.dependencies_satisfied(state, task_id)
         )

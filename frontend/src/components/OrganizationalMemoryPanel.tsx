@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Database, Shield, Zap, Search, Activity } from 'lucide-react';
+import { Database, Activity } from 'lucide-react';
 import { api } from '../services/api';
 
 export default function OrganizationalMemoryPanel({ projectId }: { projectId?: string }) {

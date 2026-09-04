@@ -140,12 +140,16 @@ class DeliveryResultAdapter:
     ) -> ProjectAggregate:
         if aggregate.execution_state is None:
             raise ValueError("Delivery result cannot be attached before Supervisor initialization.")
-        state = supervisor.apply_agent_result(aggregate.execution_state, result)
+        
+        stage = ProjectLifecycleStage.READY_FOR_DELIVERY
+        if result.delivery_status == "deployed":
+            # Optional: define a new stage or just stay ready
+            pass
+
         return aggregate.model_copy(
             update={
-                "execution_state": state,
                 "delivery_result": result,
-                "generated_artifacts": state.generated_artifacts,
-                "lifecycle": _metadata(aggregate, ProjectLifecycleStage.READY_FOR_EXECUTION),
+                "generated_artifacts": aggregate.generated_artifacts + result.produced_artifacts,
+                "lifecycle": _metadata(aggregate, stage),
             }
         )

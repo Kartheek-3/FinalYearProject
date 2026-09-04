@@ -53,8 +53,8 @@ class CodingAgent:
             context = CodingContextBuilder.build(request, workspace)
             knowledge = await self._retrieve_knowledge(command.task.description, command.project_id)
             proposal = await self._propose(context, knowledge)
-            ChangeValidator.validate(proposal.changes, request, workspace)
-            artifacts = self._apply_changes(proposal.changes, command.task_id, workspace)
+            validated_changes = ChangeValidator.validate(proposal.changes, request, workspace)
+            artifacts = self._apply_changes(validated_changes, command.task_id, workspace)
             return CodingResult(
                 agent=AgentName.CODING,
                 task_id=command.task_id,
@@ -62,7 +62,7 @@ class CodingAgent:
                 attempt_number=command.attempt_number,
                 started_at=started_at,
                 produced_artifacts=artifacts,
-                changes=proposal.changes,
+                changes=validated_changes,
                 summary=proposal.summary,
                 warnings=proposal.warnings,
                 metadata={"workspace": "generated_project", "change_count": str(len(proposal.changes))},
@@ -73,12 +73,32 @@ class CodingAgent:
             return self._failure_result(command, started_at, f"Unexpected coding failure: {exc}")
 
     async def _retrieve_knowledge(self, query: str, project_id: str) -> Sequence[KnowledgeSnippet]:
+        return ()
         if self.knowledge_retriever is None:
             return ()
         try:
-            return await self.knowledge_retriever.retrieve(
+            from backend.composition.events import event_gateway, RuntimeEvent
+            import time
+            import asyncio
+            
+            asyncio.create_task(event_gateway.publish(RuntimeEvent(
+                event_type="memory.retrieval.started",
+                project_id=project_id,
+                timestamp=time.time(),
+                data={"query": query, "agent": "coding"}
+            )))
+            
+            snippets = await self.knowledge_retriever.retrieve(
                 query=query, limit=5, project_id=project_id, agent="coding"
             )
+            
+            asyncio.create_task(event_gateway.publish(RuntimeEvent(
+                event_type="memory.retrieval.completed",
+                project_id=project_id,
+                timestamp=time.time(),
+                data={"count": len(snippets), "agent": "coding"}
+            )))
+            return snippets
         except Exception as exc:
             raise CodingProviderError("Coding knowledge retrieval failed; no changes were applied.") from exc
 
@@ -104,7 +124,7 @@ class CodingAgent:
             return CodingProposal.model_validate(response)
         except ValidationError as exc:
             raise CodingResponseValidationError(
-                "LLM response does not satisfy the Coding Agent proposal contract."
+                f"LLM response does not satisfy the Coding Agent proposal contract: {str(exc)}"
             ) from exc
 
     @staticmethod
@@ -113,6 +133,12 @@ class CodingAgent:
         task_id: str,
         workspace: Workspace,
     ) -> list[ArtifactReference]:
+        # Deduplicate changes by path, keeping the last one
+        deduped = {}
+        for c in changes:
+            deduped[c.path] = c
+        changes = list(deduped.values())
+        
         originals: dict[str, ExistingFileContext | None] = {
             change.path: workspace.read_file(change.path)
             if workspace.exists(change.path)
@@ -140,7 +166,7 @@ class CodingAgent:
                 raise WorkspaceOperationError(
                     "A workspace operation failed and rollback could not be completed safely."
                 ) from rollback_error
-            raise WorkspaceOperationError("A workspace operation failed; applied changes were rolled back.") from exc
+            raise WorkspaceOperationError(f"A workspace operation failed; applied changes were rolled back. Error: {exc}") from exc
 
         return [
             ArtifactReference(

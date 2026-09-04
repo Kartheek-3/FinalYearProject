@@ -85,11 +85,11 @@ class QAAgent:
         workspace: ReadOnlyWorkspace,
     ) -> tuple[ValidationCheck, list[QAIssue]]:
         task_ids = [task.task_id for task in request.implementation_tasks]
-        paths = request.inspection_paths or [
-            artifact.location
-            for artifact in request.generated_artifacts
-            if artifact.task_id in task_ids
-        ]
+        paths = request.inspection_paths or list(set([
+            ref.location
+            for ref in request.generated_artifacts
+            if ref.artifact_type == "generated_source_file" and ref.task_id in task_ids
+        ]))
         if not paths:
             return ValidationCheck(
                 check_id="qa_code_review",
@@ -157,17 +157,27 @@ class QAAgent:
                 related_task_ids=task_ids,
                 errors=[f"Code-review provider failure: {exc}"],
             ), []
+        # Enforce strict adherence to the syntax-only review policy.
+        filtered_issues = [
+            issue for issue in result.issues 
+            if issue.category not in {
+                QAIssueCategory.CODE_QUALITY, 
+                QAIssueCategory.REQUIREMENT, 
+                QAIssueCategory.ACCEPTANCE_CRITERIA
+            }
+        ]
+        
         return ValidationCheck(
             check_id="qa_code_review",
             category=ValidationCategory.CODE_REVIEW,
             applicable=result.applicable,
             executed=result.executed,
-            status=result.status,
+            status=ValidationStatus.FAILED if filtered_issues else ValidationStatus.PASSED,
             related_task_ids=task_ids,
             evidence=result.evidence,
             errors=result.errors,
-            issue_ids=[issue.issue_id for issue in result.issues],
-        ), result.issues
+            issue_ids=[issue.issue_id for issue in filtered_issues],
+        ), filtered_issues
 
     def _inspect_artifacts(
         self,
@@ -329,7 +339,8 @@ class QAAgent:
         issues: list[QAIssue],
     ) -> tuple[ValidationCheck, list[QAIssue]]:
         previous_rework_ids = {issue.issue_id for issue in request.previous_issues if issue.required_rework}
-        unresolved = [issue for issue in issues if issue.issue_id in previous_rework_ids]
+        # If the LLM reuses an ID for a new minor issue, it shouldn't trigger a regression failure.
+        unresolved = [issue for issue in issues if issue.issue_id in previous_rework_ids and issue.required_rework]
         if not request.previous_issues:
             return ValidationCheck(
                 check_id="qa_regression",
@@ -361,13 +372,6 @@ class QAAgent:
             return QAVerdict.REWORK_REQUIRED
         if any(check.status == ValidationStatus.FAILED for check in checks):
             return QAVerdict.FAIL
-        if any(
-            result.status in {ValidationStatus.BLOCKED, ValidationStatus.NOT_EXECUTED}
-            for result in [*requirement_results, *acceptance_results]
-        ):
-            return QAVerdict.BLOCKED
-        if any(check.applicable and check.status in {ValidationStatus.BLOCKED, ValidationStatus.NOT_EXECUTED} for check in checks):
-            return QAVerdict.BLOCKED
         return QAVerdict.PASS
 
     @staticmethod

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../services/api';
-import { Terminal, Database, Cpu, HardDrive } from 'lucide-react';
+import { Terminal, Cpu, HardDrive } from 'lucide-react';
 
 export default function SystemHealth() {
   const [health, setHealth] = useState<any>(null);

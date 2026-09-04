@@ -1,0 +1,127 @@
+{
+  "version": "2.0.0",
+  "resources": [
+    {
+      "id": "index",
+      "uri": "aevum://context/index.json",
+      "name": "Project Index",
+      "description": "Project structure, domains, features, and plans",
+      "mimeType": "application/json"
+    },
+    {
+      "id": "memory",
+      "uri": "aevum://context/global/memory.md",
+      "name": "Global Memory",
+      "description": "Global memory and context shared across sessions",
+      "mimeType": "text/markdown"
+    },
+    {
+      "id": "persona",
+      "uri": "aevum://context/global/companion_persona.json",
+      "name": "Companion Persona",
+      "description": "Active companion AI persona configuration",
+      "mimeType": "application/json"
+    },
+    {
+      "id": "session",
+      "uri": "aevum://context/session.json",
+      "name": "Session Snapshot",
+      "description": "Real-time editor session context and reasoning",
+      "mimeType": "application/json"
+    },
+    {
+      "id": "current_plan",
+      "uri": "aevum://context/current_plan.json",
+      "name": "Active Plan Context",
+      "description": "The plan currently assigned and being executed",
+      "mimeType": "application/json"
+    },
+    {
+      "id": "health",
+      "uri": "aevum://context/health.json",
+      "name": "Project Health Metrics",
+      "description": "Complexity, duplication and overall project health",
+      "mimeType": "application/json"
+    },
+    {
+      "id": "global-agent-rules",
+      "uri": "aevum://context/global/agent_rules.md",
+      "name": "Agent Rules",
+      "description": "Operational rules and MCP-First mandate for all Agents",
+      "mimeType": "text/markdown"
+    },
+    {
+      "id": "global-tech-stack",
+      "uri": "aevum://context/global/tech_stack.md",
+      "name": "Tech Stack",
+      "description": "Technology stack and architectural conventions",
+      "mimeType": "text/markdown"
+    },
+    {
+      "id": "global-conventions",
+      "uri": "aevum://context/global/conventions.md",
+      "name": "Conventions",
+      "description": "Coding and documentation conventions",
+      "mimeType": "text/markdown"
+    }
+  ],
+  "prompts": [
+    {
+      "id": "bootstrap",
+      "name": "Bootstrap Instruction",
+      "description": "Get the Aevum bootstrap instruction and initial context"
+    }
+  ],
+  "tools": [
+    {
+      "id": "aevum_mark_plan_done",
+      "name": "Mark Plan Done",
+      "description": "Mark a plan as completed and update project index"
+    },
+    {
+      "id": "aevum_assign_plan",
+      "name": "Assign Plan",
+      "description": "Assign a plan to in-progress status for agent work"
+    },
+    {
+      "id": "aevum_sync_index",
+      "name": "Sync Index",
+      "description": "Synchronize project index from filesystem"
+    },
+    {
+      "id": "aevum_capture_evidence",
+      "name": "Capture Evidence",
+      "description": "Save execution outputs and terminal logs as evidence for a plan"
+    },
+    {
+      "id": "aevum_search_knowledge",
+      "name": "Search Knowledge",
+      "description": "Semantic and keyword search across Aevum project knowledge"
+    },
+    {
+      "id": "aevum_get_ui_context",
+      "name": "Get UI Context",
+      "description": "Fetch real-time VS Code editor and UI state"
+    },
+    {
+      "id": "aevum_submit_suggestion",
+      "name": "Submit Suggestion",
+      "description": "Communicate structural improvement ideas (Plans/Domains/Features) to the extension"
+    },
+    {
+      "id": "aevum_suggest_plans",
+      "name": "Suggest Plans",
+      "description": "Request the system to suggest next Plans based on history"
+    },
+    {
+      "id": "aevum_suggest_domains",
+      "name": "Suggest Domains",
+      "description": "Request the system to suggest new Domains for the project"
+    },
+    {
+      "id": "aevum_suggest_features",
+      "name": "Suggest Features",
+      "description": "Request the system to suggest new Features for a specific Domain"
+    }
+  ]
+}

@@ -43,6 +43,12 @@ export const api = {
     return `${wsBase}/ws/projects/${id}/runtime`;
   },
 
+  getFiles: (id: string): Promise<string[]> =>
+    fetch(`${API_BASE}/projects/${id}/files`).then(handleResponse),
+
+  getFileContent: (id: string, path: string): Promise<{ path: string; content: string }> =>
+    fetch(`${API_BASE}/projects/${id}/files/${encodeURIComponent(path)}`).then(handleResponse),
+
   getMemoryStats: () =>
     fetch(`${API_BASE}/memory/stats`).then(handleResponse),
 

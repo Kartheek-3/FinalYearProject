@@ -41,7 +41,7 @@ from backend.composition.repository import ProjectRepository
 from backend.composition.workspace import ProjectWorkspaceProvisioner
 from backend.deployment.docker_provider import DefaultDockerDeploymentProvider
 from backend.deployment.errors import DeploymentError
-from backend.agents.delivery.models import DeliveryRequest, DeploymentTarget, DockerDeploymentConfiguration, ComposeSpecification, DockerServiceConfiguration, DockerfileSpecification, ContainerRuntime
+from backend.agents.delivery.models import DeliveryRequest, DeploymentTarget, DockerDeploymentConfiguration, ComposeSpecification, DockerServiceConfiguration, DockerfileSpecification, ContainerRuntime, DeliveryStatus
 from backend.agents.delivery.workspace import DeliveryWorkspace
 from backend.composition.events import event_gateway, RuntimeEvent
 import time
@@ -101,37 +101,46 @@ class ProjectLifecycleService:
                     project_id=project_id,
                 )
             )
+            try:
+                workspace = self._provisioner.open(aggregate.workspace)
+                workspace.create_file("planning/analysis.json", analysis.model_dump_json(indent=2))
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"Failed to persist analysis artifact: {e}")
+
             aggregate = AnalysisResultAdapter.attach(aggregate, analysis)
             await self._repository.update(aggregate)
             _emit_sync(project_id, "agent.completed", {"agent": "analysis"})
 
             _emit_sync(project_id, "agent.started", {"agent": "planning"})
+
+            from pydantic import BaseModel
+            async def write_planning_section(name: str, data: BaseModel):
+                try:
+                    workspace = self._provisioner.open(aggregate.workspace)
+                    path = f"planning/{name}.json"
+                    workspace.create_file(path, data.model_dump_json(indent=2))
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).error(f"Failed to persist planning artifact {name}: {e}")
+
             planning = await self._agents.planning.plan(
-                PlanningRequest(analysis_artifact=analysis, project_id=project_id)
+                PlanningRequest(analysis_artifact=analysis, project_id=project_id),
+                on_section_completed=write_planning_section
             )
             TaskGraphValidator.validate(planning, analysis)
             execution_state = self._agents.supervisor.initialize(planning, project_id=project_id)
             aggregate = PlanningResultAdapter.attach(aggregate, planning, execution_state)
-            _emit_sync(project_id, "agent.completed", {"agent": "planning"})
             
-            # Persist planning artifacts to physical workspace
             try:
                 workspace = self._provisioner.open(aggregate.workspace)
-                workspace.create_file("planning/analysis.json", analysis.model_dump_json(indent=2))
-                workspace.create_file("planning/foundation.json", planning.result.foundation.model_dump_json(indent=2))
-                workspace.create_file("planning/architecture.json", planning.result.architecture.model_dump_json(indent=2))
-                workspace.create_file("planning/database.json", planning.result.database.model_dump_json(indent=2))
-                workspace.create_file("planning/api.json", planning.result.api.model_dump_json(indent=2))
-                workspace.create_file("planning/workflows.json", planning.result.workflows.model_dump_json(indent=2))
-                workspace.create_file("planning/project_structure.json", planning.result.project_structure.model_dump_json(indent=2))
-                workspace.create_file("planning/execution.json", planning.result.execution.model_dump_json(indent=2))
-                workspace.create_file("planning/traceability.json", planning.result.traceability.model_dump_json(indent=2))
                 workspace.create_file("planning/project_plan.json", planning.model_dump_json(indent=2))
             except Exception as e:
-                # Log or handle workspace creation error, but don't crash
                 import logging
-                logging.getLogger(__name__).error(f"Failed to persist planning artifacts: {e}")
+                logging.getLogger(__name__).error(f"Failed to persist project_plan artifact: {e}")
 
+            _emit_sync(project_id, "agent.completed", {"agent": "planning"})
+            
             await self._repository.update(aggregate)
             
             aggregate = await self.run_until_blocked(project_id)
@@ -302,21 +311,27 @@ class ProjectLifecycleService:
                 ProjectLifecycleStage.FAILED,
             }:
                 return await self._repository.update(latest)
-            if any(gate.status == QualityGateStatus.REWORK_REQUIRED for gate in latest.quality_gates):
+            if any(gate.status == QualityGateStatus.BLOCKED for gate in latest.quality_gates):
                 return latest
             latest = await self.run_next_task(project_id)
-            if any(
-                gate.status in {QualityGateStatus.REWORK_REQUIRED, QualityGateStatus.BLOCKED}
-                for gate in latest.quality_gates
-            ):
+            if any(gate.status == QualityGateStatus.BLOCKED for gate in latest.quality_gates):
                 return latest
-            if latest.execution_state and any(
-                task.status in {TaskExecutionStatus.FAILED, TaskExecutionStatus.BLOCKED}
-                for task in latest.execution_state.tasks.values()
-            ):
-                return await self._repository.update(
-                    self._pause(latest, "Task execution cannot continue until the failed or blocked task is resolved.")
-                )
+            if latest.execution_state:
+                tasks = latest.execution_state.tasks.values()
+                if any(t.status == TaskExecutionStatus.FAILED for t in tasks):
+                    return await self._repository.update(
+                        self._pause(latest, "Task execution cannot continue until the failed task is resolved.")
+                    )
+                
+                # Check for deadlock (blocked tasks but nothing running/ready)
+                has_blocked = any(t.status == TaskExecutionStatus.BLOCKED for t in tasks)
+                has_active = any(t.status in {TaskExecutionStatus.READY, TaskExecutionStatus.IN_PROGRESS} for t in tasks)
+                has_pending_qa = any(g.status in {QualityGateStatus.PENDING, QualityGateStatus.REWORK_REQUIRED} for g in latest.quality_gates)
+                if has_blocked and not (has_active or has_pending_qa):
+                    return await self._repository.update(
+                        self._pause(latest, "Task execution is deadlocked: tasks are blocked and no tasks are active or ready.")
+                    )
+
         return await self._repository.update(
             self._pause(latest, f"Orchestration reached its iteration limit ({max_iterations}).")
         )
@@ -351,6 +366,18 @@ class ProjectLifecycleService:
             outcome = await self._dispatcher.dispatch_outcome(aggregate, command)
             if outcome.qa_report is None:
                 raise CompositionError("QA dispatch did not return a QAReport.")
+            
+            try:
+                workspace = self._provisioner.open(aggregate.workspace)
+                qa_report_path = f"qa/qa_report_{task_id}.json"
+                if workspace.exists(qa_report_path):
+                    current_hash = workspace.read_file(qa_report_path).content_hash
+                    workspace.delete_file(qa_report_path, current_hash)
+                workspace.create_file(qa_report_path, outcome.qa_report.model_dump_json(indent=2))
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"Failed to persist QA report: {e}")
+                
             updated = QAResultAdapter.attach(aggregate, outcome.qa_report, task_id, self._agents.supervisor)
             if outcome.qa_report.verdict in {QAVerdict.BLOCKED, QAVerdict.FAIL}:
                 _emit_sync(project_id, "qa.failed", {"task_id": task_id, "verdict": outcome.qa_report.verdict.value})
@@ -467,10 +494,21 @@ class ProjectLifecycleService:
                         path="Dockerfile",
                         runtime=ContainerRuntime.GENERIC,
                         base_image="python:3.11-slim",
-                        startup_command=["python", "app.py"]
+                        startup_command=["python", "app.py"],
+                        content="FROM python:3.11-slim\nWORKDIR /app\nCOPY . .\nCMD [\"python\", \"app.py\"]"
                     )
                 )
             ]
+        )
+        
+        from backend.agents.planning.models import ImplementationTask
+        dummy_task = ImplementationTask(
+            task_id=task_id,
+            title="Deploy Project",
+            description="Deployment orchestration.",
+            task_type="backend",
+            priority="must",
+            status="planned"
         )
         
         command = AgentDispatchCommand(
@@ -478,7 +516,7 @@ class ProjectLifecycleService:
             task_id=task_id,
             agent=AgentName.DELIVERY,
             attempt_number=1,
-            task=None,
+            task=dummy_task,
             planning_artifact=aggregate.planning_artifact,
             related_artifacts=[],
             rework_feedback=[],
@@ -496,7 +534,7 @@ class ProjectLifecycleService:
             docker=docker_config,
         )
 
-        delivery_workspace = DeliveryWorkspace(str(aggregate.workspace.workspace_dir))
+        delivery_workspace = self._provisioner.open(aggregate.workspace)
         
         _emit_sync(project_id, "delivery.started", {})
         prepared_result = await self._agents.delivery.prepare(delivery_request, delivery_workspace)
@@ -505,7 +543,21 @@ class ProjectLifecycleService:
             return await self.record_delivery_result(project_id, prepared_result)
             
         _emit_sync(project_id, "docker.started", {})
-        provider_result = await self._docker_provider.deploy(delivery_request)
+        try:
+            provider_result = await self._docker_provider.deploy(delivery_request)
+        except Exception as exc:
+            final_result = DeliveryResult(
+                agent=AgentName.DELIVERY,
+                task_id=task_id,
+                status=AgentResultStatus.FAILED,
+                attempt_number=1,
+                delivery_status=DeliveryStatus.FAILED,
+                target=DeploymentTarget.DOCKER,
+                errors=[str(exc)],
+                message="Docker deployment failed due to an exception."
+            )
+            _emit_sync(project_id, "docker.failed", {"error": str(exc)})
+            return await self.record_delivery_result(project_id, final_result)
         
         # Adapt DeploymentProviderResult into a DeliveryResult
         final_result = DeliveryResult(
@@ -547,6 +599,7 @@ class ProjectLifecycleService:
 
     def _ingest_project_outcome(self, aggregate: ProjectAggregate) -> None:
         """Extract and store validated knowledge from a completed project."""
+        return # Temporarily bypass to avoid ChromaDB hnswlib segfaults on Windows
         manager = get_memory_manager()
         
         if not aggregate.analysis_artifact or not aggregate.planning_artifact:
@@ -563,7 +616,7 @@ class ProjectLifecycleService:
             memory_id=f"arch_{aggregate.project_id}",
             memory_type=MemoryType.ARCHITECTURE_PATTERN,
             title=f"Architecture pattern for {domain}",
-            content=f"Design pattern: {arch.design_pattern.value}. Component details: {arch.components}",
+            content=f"Design style: {arch.style}. Component details: {arch.components}",
             domain=domain,
             technology_stack=tech_stack,
             source_project_id=aggregate.project_id,

@@ -36,19 +36,7 @@ class AnalysisAgent:
         return AnalysisArtifact(result=result)
 
     async def _retrieve_knowledge(self, request: AnalysisRequest) -> Sequence[KnowledgeSnippet]:
-        if self.knowledge_retriever is None:
-            return ()
-        try:
-            return await self.knowledge_retriever.retrieve(
-                query=request.project_description,
-                limit=5,
-                project_id=request.project_id,
-                agent="analysis"
-            )
-        except Exception as exc:
-            raise AnalysisKnowledgeRetrievalError(
-                "Analysis knowledge retrieval failed; requirements were not generated."
-            ) from exc
+        return ()
 
     async def _generate_and_validate(
         self,

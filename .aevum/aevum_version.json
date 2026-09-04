@@ -1,0 +1,19 @@
+{
+  "version": "2.1.0",
+  "appliedMigrations": [
+    "api_key_security_v1",
+    "persona_packaging_v1",
+    "bridge_sync_await_v1",
+    "graph_knowledge_v1",
+    "knowledge_registry_v1.7",
+    "mcp_server_init_v1.7",
+    "mcp_resources_registry_v1.7",
+    "mcp_port_config_v1.7",
+    "mcp_v1_8_upgrade",
+    "mcp_v2_0_cleanup",
+    "v2_0_resource_sync",
+    "v2_0_final_cleanup",
+    "v1_5_final_sync",
+    "v2_1_matrix_pulse"
+  ]
+}

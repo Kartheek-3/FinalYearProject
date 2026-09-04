@@ -5,6 +5,19 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 from typing import Protocol
+import time
+import asyncio
+from backend.composition.events import event_gateway, RuntimeEvent
+
+def _emit_sync(project_id: str | None, event_type: str, data: dict | None = None) -> None:
+    if not project_id:
+        return
+    asyncio.create_task(event_gateway.publish(RuntimeEvent(
+        event_type=event_type,
+        project_id=project_id,
+        timestamp=time.time(),
+        data=data or {}
+    )))
 
 from backend.agents.coding.errors import (
     UnsafeWorkspacePathError,
@@ -28,16 +41,12 @@ class Workspace(Protocol):
 
 
 class GeneratedProjectWorkspace:
-    """A local workspace restricted to one existing product directory.
+    """A local workspace restricted to one existing product directory."""
 
-    ``generated_projects_root`` must be SEAM's generated-product container. The
-    selected root must be a child of it, so the SEAM repository itself can never
-    become a Coding Agent workspace.
-    """
-
-    def __init__(self, root: Path, generated_projects_root: Path) -> None:
+    def __init__(self, root: Path, generated_projects_root: Path, project_id: str | None = None) -> None:
         self._generated_projects_root = generated_projects_root.resolve()
         self._root = root.resolve()
+        self._project_id = project_id
         if not self._generated_projects_root.is_dir():
             raise WorkspaceUnavailableError("The generated-projects root does not exist.")
         if not self._root.is_dir():
@@ -96,8 +105,21 @@ class GeneratedProjectWorkspace:
         if path.exists():
             raise WorkspaceOperationError(f"Cannot create existing file: '{relative_path}'.")
         try:
+            # Emit folder.created for any parent directories that don't exist yet
+            current_parent = path.parent
+            dirs_to_create = []
+            while current_parent != self._root and not current_parent.exists():
+                dirs_to_create.append(current_parent)
+                current_parent = current_parent.parent
+            
+            for d in reversed(dirs_to_create):
+                d.mkdir(parents=True, exist_ok=True)
+                rel_dir = str(d.relative_to(self._root)).replace("\\", "/")
+                _emit_sync(self._project_id, "folder.created", {"path": rel_dir})
+                
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content, encoding="utf-8", newline="\n")
+            _emit_sync(self._project_id, "file.created", {"path": relative_path})
         except OSError as exc:
             raise WorkspaceOperationError(f"Unable to create '{relative_path}'.") from exc
 
@@ -109,6 +131,7 @@ class GeneratedProjectWorkspace:
             )
         try:
             self._resolve_relative(relative_path).write_text(content, encoding="utf-8", newline="\n")
+            _emit_sync(self._project_id, "file.updated", {"path": relative_path})
         except OSError as exc:
             raise WorkspaceOperationError(f"Unable to update '{relative_path}'.") from exc
 
@@ -120,6 +143,7 @@ class GeneratedProjectWorkspace:
             )
         try:
             self._resolve_relative(relative_path).unlink()
+            _emit_sync(self._project_id, "file.deleted", {"path": relative_path})
         except OSError as exc:
             raise WorkspaceOperationError(f"Unable to delete '{relative_path}'.") from exc
 

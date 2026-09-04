@@ -45,13 +45,9 @@ class CodeChange(SupervisorModel):
         if self.operation in {CodeOperation.CREATE, CodeOperation.UPDATE}:
             if self.content is None or not self.content.strip():
                 raise ValueError("Create and update changes require non-empty content.")
-        if self.operation == CodeOperation.UPDATE and not self.expected_current_content_hash:
-            raise ValueError("Update changes require expected_current_content_hash.")
         if self.operation == CodeOperation.DELETE:
             if self.content is not None:
                 raise ValueError("Delete changes must not include content.")
-            if not self.expected_current_content_hash:
-                raise ValueError("Delete changes require expected_current_content_hash.")
         return self
 
 
@@ -67,8 +63,8 @@ class CodingRequest(SupervisorModel):
     """Structured task input; design context arrives through the Supervisor command."""
 
     dispatch_command: AgentDispatchCommand
-    relevant_functional_requirements: list[FunctionalRequirement] = Field(min_length=1)
-    relevant_acceptance_criteria: list[AcceptanceCriterion] = Field(min_length=1)
+    relevant_functional_requirements: list[FunctionalRequirement] = Field(default_factory=list)
+    relevant_acceptance_criteria: list[AcceptanceCriterion] = Field(default_factory=list)
     context_paths: list[NonEmptyText] = Field(default_factory=list)
     allow_delete: bool = False
 

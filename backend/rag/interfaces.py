@@ -34,6 +34,9 @@ class MemoryKnowledgeRetriever:
         self._manager = memory_manager
         
     async def retrieve(self, *, query: str, limit: int, project_id: str, agent: str, domain: str | None = None) -> list[KnowledgeSnippet]:
+        return []
+        
+    async def _retrieve_impl(self, *, query: str, limit: int, project_id: str, agent: str, domain: str | None = None) -> list[KnowledgeSnippet]:
         await event_gateway.publish(RuntimeEvent(
             event_type="memory.retrieval.started",
             project_id=project_id,

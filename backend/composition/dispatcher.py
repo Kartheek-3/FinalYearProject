@@ -74,11 +74,16 @@ class AggregateDispatcher:
             raise DispatcherError(
                 f"Coding task references unknown acceptance criteria: {sorted(missing_criteria)}"
             )
+        context_paths = [
+            artifact.location
+            for artifact in command.related_artifacts
+            if artifact.artifact_type == "generated_source_file"
+        ]
         request = CodingRequest(
             dispatch_command=command,
             relevant_functional_requirements=[requirements[item_id] for item_id in command.task.requirement_ids],
             relevant_acceptance_criteria=[criteria[item_id] for item_id in command.task.acceptance_criteria],
-            context_paths=[],
+            context_paths=context_paths,
         )
         return await self._agents.coding.implement(request, workspace)
 

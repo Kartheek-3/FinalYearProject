@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Folder, PlusSquare, Activity, Settings } from 'lucide-react';
+import { LayoutDashboard, PlusSquare, Activity, Settings } from 'lucide-react';
 
 export default function ActivityBar() {
   const location = useLocation();

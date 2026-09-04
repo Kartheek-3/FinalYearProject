@@ -246,4 +246,7 @@ export interface RuntimeEvent {
   project_id: string;
   timestamp: number;
   data: Record<string, any>;
+  event_id?: string;
+  message?: string;
 }
+

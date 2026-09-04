@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Play, FastForward, UploadCloud, RefreshCw } from 'lucide-react';
+import { FastForward, UploadCloud, RefreshCw } from 'lucide-react';
 import { api } from '../services/api';
 import { ProjectLifecycleStage } from '../types/api';
 import type { ProjectAggregate, RuntimeEvent } from '../types/api';
@@ -10,6 +10,7 @@ import EditorView from '../components/EditorView';
 import SupervisorPanel from '../components/SupervisorPanel';
 import BottomPanel from '../components/BottomPanel';
 import OrganizationalMemoryPanel from '../components/OrganizationalMemoryPanel';
+import ProgressPanel from '../components/ProgressPanel';
 
 export default function ProjectWorkspace() {
   const { projectId } = useParams();
@@ -139,30 +140,26 @@ export default function ProjectWorkspace() {
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         
         {/* Left: Explorer */}
-        <FileExplorer projectId={projectId as string} onFileSelect={setSelectedFile} selectedFile={selectedFile} />
+        <FileExplorer projectId={projectId as string} onFileSelect={setSelectedFile} selectedFile={selectedFile} liveEvents={liveEvents} />
 
         {/* Center: Editor */}
         <EditorView projectId={projectId as string} filePath={selectedFile} />
 
-        {/* Right: Supervisor Panel */}
-        <div style={{ width: '300px', display: 'flex', flexDirection: 'column', borderLeft: '1px solid #333' }}>
-          <SupervisorPanel executionState={project.execution_state || undefined} />
-          <div style={{ height: '300px', borderTop: '1px solid #333' }}>
-             <OrganizationalMemoryPanel projectId={projectId} />
+        {/* Right: Orchestration Panel */}
+        <div style={{ width: '320px', display: 'flex', flexDirection: 'column', borderLeft: '1px solid #333', backgroundColor: '#252526', overflow: 'hidden' }}>
+          <div style={{ flex: 1, overflowY: 'auto' }}>
+            <ProgressPanel lifecycleStage={project.lifecycle.stage} pipelineStatus={pipelineStatus} liveEvents={liveEvents} executionState={project.execution_state || undefined} />
+          </div>
+          <div style={{ flex: 1, borderTop: '1px solid #333', overflowY: 'auto' }}>
+            <SupervisorPanel executionState={project.execution_state || undefined} />
           </div>
         </div>
 
       </div>
 
       {/* Bottom: Terminal & Events */}
-      <BottomPanel executionState={project.execution_state || undefined} liveEvents={liveEvents} />
+      <BottomPanel executionState={project.execution_state || undefined} liveEvents={liveEvents} projectId={projectId} />
 
-      {(actionLoading || pipelineStatus) && (
-        <div className="loading-overlay" style={{ position: 'absolute', bottom: 10, right: 10, backgroundColor: 'rgba(0,0,0,0.8)', padding: '10px 20px', borderRadius: 4, color: '#fff', fontSize: '12px', zIndex: 1000 }}>
-          <div className="spinner mb-2" style={{ display: 'inline-block', width: 12, height: 12, border: '2px solid #007acc', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }}></div>
-          <span style={{ marginLeft: 10, fontFamily: 'monospace' }}>{pipelineStatus || actionLoading}</span>
-        </div>
-      )}
     </div>
   );
 }

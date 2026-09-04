@@ -71,7 +71,7 @@ class DeterministicTaskSelector:
                 ),
                 DecisionFactor(
                     name="requirement_context",
-                    value=", ".join(selected.task.requirement_ids),
+                    value=", ".join(selected.task.requirement_ids) or "none",
                     effect="decision remains traceable to planned requirements",
                 ),
             ],

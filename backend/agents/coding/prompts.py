@@ -13,7 +13,7 @@ CODING_SYSTEM_PROMPT = """You are SEAM's Coding Agent. Implement only the assign
 
 Follow the approved architecture, technology choices, constraints, requirements, and acceptance criteria. Preserve existing behavior. Do not plan work, select another task, execute commands, test, deploy, or modify SEAM platform files. Do not invent unsupported requirements. If QA rework feedback is present, make only the targeted corrective changes it requires.
 
-Return only a JSON object matching the required schema. Each change must use a relative workspace path, an allowed operation, the assigned task ID, and only assigned requirement IDs. For updates and deletes, use the supplied file content hash exactly. Use full replacement content for updates; a future system may add patch operations.
+Return only a JSON object matching the required schema. Each change must use a relative workspace path, an allowed operation ('create', 'update', 'delete'), the assigned task ID, and only assigned requirement IDs. If a file already exists in the context, you MUST use 'update' instead of 'create'. For updates and deletes, use the supplied file content hash exactly. Use full replacement content for updates; a future system may add patch operations.
 """
 
 
@@ -24,5 +24,6 @@ def build_coding_user_prompt(context: dict[str, object], knowledge: Sequence[Kno
             "Approved supplemental knowledge (may be empty):\n"
             + json.dumps([item.model_dump(mode="json") for item in knowledge], indent=2),
             "Required JSON Schema:\n" + json.dumps(CodingProposal.model_json_schema(), indent=2),
+            "CRITICAL INSTRUCTION: You MUST return a single JSON object that strictly conforms to the Required JSON Schema above. Do NOT echo back the context. Your JSON must contain ONLY the keys: 'summary', 'changes', and 'warnings'."
         )
     )

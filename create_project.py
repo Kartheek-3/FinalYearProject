@@ -21,10 +21,10 @@ project_id = project_data.get("project_id")
 print(f"Project created with ID: {project_id}")
 
 print("\nStarting full SEAM lifecycle execution...")
-run_url = f"http://localhost:8000/projects/{project_id}/run-until-blocked"
-run_response = requests.post(run_url, json={"max_iterations": 20})
+run_url = f"http://localhost:8000/projects/{project_id}/run"
+run_response = requests.post(run_url, json={})
 
-if run_response.status_code != 200:
+if run_response.status_code not in (200, 202):
     print(f"Execution failed: {run_response.status_code}")
     print(run_response.text)
     sys.exit(1)

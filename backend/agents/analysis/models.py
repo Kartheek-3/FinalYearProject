@@ -16,7 +16,7 @@ Identifier = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{1,63}$")]
 class ContractModel(BaseModel):
     """Reject undeclared fields so every exchanged artifact stays predictable."""
 
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    model_config = ConfigDict(extra="ignore", str_strip_whitespace=True)
 
 
 class AnalysisRequest(ContractModel):
