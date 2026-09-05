@@ -62,7 +62,7 @@ export default function Landing() {
           transition={{ duration: 0.6, delay: 0.1 }}
           className="text-4xl md:text-6xl lg:text-7xl font-extrabold tracking-tight text-white max-w-4xl leading-[1.1]"
         >
-          Autonomous Software Engineering
+          Build Software. Autonomously.
         </motion.h1>
 
         <motion.p
@@ -71,8 +71,7 @@ export default function Landing() {
           transition={{ duration: 0.6, delay: 0.2 }}
           className="mt-6 text-base md:text-lg text-slate-400 max-w-2xl leading-relaxed"
         >
-          Turn a software idea into a tested, secured, and deployable application through autonomous AI engineering.
-          Analysis, planning, coding, quality assurance, and Docker deployment in a unified developer environment.
+          Describe your idea. SEAM analyzes requirements, designs the architecture, generates code, tests it, performs security analysis, fixes failures, and deploys the application.
         </motion.p>
 
         <motion.div
