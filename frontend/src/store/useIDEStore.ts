@@ -10,6 +10,7 @@ export interface Tab {
   content: string;
   language: string;
   isDirty?: boolean;
+  isPinned?: boolean;
 }
 
 export type AgentStatus = 
@@ -121,11 +122,18 @@ interface IDEState {
   setDiffState: (diff: DiffState | null) => void;
   traceabilityMap: Record<string, FileTraceability>;
 
+  // Split Editor
+  splitEditor: boolean;
+  splitOrientation: 'horizontal' | 'vertical';
+  secondaryTabId: string | null;
+  setSplitEditor: (split: boolean, orientation?: 'horizontal' | 'vertical') => void;
+  setSecondaryTabId: (id: string | null) => void;
+
   // Layout
   activeActivity: ActivityBarItem;
   sidebarOpen: boolean;
   bottomPanelOpen: boolean;
-  activeBottomTab: 'terminal' | 'problems' | 'output' | 'mcp' | 'agents' | 'ports' | 'deployment';
+  activeBottomTab: 'terminal' | 'problems' | 'output' | 'mcp' | 'agents' | 'ports' | 'deployment' | 'memory';
   
   // Actions
   setActiveActivity: (item: ActivityBarItem) => void;
@@ -133,11 +141,16 @@ interface IDEState {
   setBottomPanelOpen: (isOpen: boolean) => void;
   setActiveBottomTab: (tab: IDEState['activeBottomTab']) => void;
 
-  // Editor
+  // Editor Tabs
   tabs: Tab[];
   activeTabId: string | null;
   openTab: (tab: Tab) => void;
   closeTab: (id: string) => void;
+  closeOthers: (id: string) => void;
+  closeToRight: (id: string) => void;
+  closeAll: () => void;
+  togglePinTab: (id: string) => void;
+  reorderTabs: (sourceIndex: number, destinationIndex: number) => void;
   setActiveTab: (id: string) => void;
   updateTabContent: (id: string, content: string) => void;
   saveCurrentTab: () => Promise<void>;
@@ -556,6 +569,19 @@ const storeCreator: StateCreator<IDEState> = (set, get) => ({
   setDiffState: (diff) => set({ diffState: diff }),
   traceabilityMap: {},
 
+  // Split Editor implementation
+  splitEditor: false,
+  splitOrientation: 'horizontal',
+  secondaryTabId: null,
+  setSplitEditor: (split, orientation = 'horizontal') => set((state) => ({
+    splitEditor: split,
+    splitOrientation: orientation,
+    secondaryTabId: split && !state.secondaryTabId
+      ? (state.tabs.find(t => t.id !== state.activeTabId)?.id || state.activeTabId)
+      : state.secondaryTabId
+  })),
+  setSecondaryTabId: (id) => set({ secondaryTabId: id }),
+
   activeActivity: 'explorer',
   sidebarOpen: true,
   bottomPanelOpen: true,
@@ -577,10 +603,51 @@ const storeCreator: StateCreator<IDEState> = (set, get) => ({
   }),
   closeTab: (id) => set((state) => {
     const newTabs = state.tabs.filter(t => t.id !== id);
+    const newActiveId = state.activeTabId === id ? (newTabs[0]?.id || null) : state.activeTabId;
+    const newSecondaryId = state.secondaryTabId === id ? (newTabs[0]?.id || null) : state.secondaryTabId;
     return {
       tabs: newTabs,
-      activeTabId: state.activeTabId === id ? (newTabs[0]?.id || null) : state.activeTabId
+      activeTabId: newActiveId,
+      secondaryTabId: newSecondaryId,
+      splitEditor: newTabs.length <= 1 ? false : state.splitEditor,
     };
+  }),
+  closeOthers: (id) => set((state) => {
+    const retained = state.tabs.filter(t => t.id === id || t.isPinned);
+    return {
+      tabs: retained,
+      activeTabId: id,
+      secondaryTabId: state.secondaryTabId === id ? null : state.secondaryTabId,
+      splitEditor: retained.length <= 1 ? false : state.splitEditor,
+    };
+  }),
+  closeToRight: (id) => set((state) => {
+    const idx = state.tabs.findIndex(t => t.id === id);
+    if (idx === -1) return {};
+    const retained = state.tabs.filter((t, i) => i <= idx || t.isPinned);
+    return {
+      tabs: retained,
+      activeTabId: retained.find(t => t.id === state.activeTabId) ? state.activeTabId : id,
+      splitEditor: retained.length <= 1 ? false : state.splitEditor,
+    };
+  }),
+  closeAll: () => set((state) => {
+    const pinned = state.tabs.filter(t => t.isPinned);
+    return {
+      tabs: pinned,
+      activeTabId: pinned[0]?.id || null,
+      secondaryTabId: null,
+      splitEditor: false,
+    };
+  }),
+  togglePinTab: (id) => set((state) => ({
+    tabs: state.tabs.map(t => t.id === id ? { ...t, isPinned: !t.isPinned } : t)
+  })),
+  reorderTabs: (sourceIndex, destinationIndex) => set((state) => {
+    const newTabs = [...state.tabs];
+    const [removed] = newTabs.splice(sourceIndex, 1);
+    newTabs.splice(destinationIndex, 0, removed);
+    return { tabs: newTabs };
   }),
   setActiveTab: (id) => set({ activeTabId: id }),
   updateTabContent: (id, content) => set((state) => ({

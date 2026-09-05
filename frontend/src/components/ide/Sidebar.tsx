@@ -16,10 +16,12 @@ import {
   ExternalLink,
   X,
   Sparkles,
-  AlertCircle
+  AlertCircle,
+  GitBranch,
 } from 'lucide-react';
 import { api } from '../../services/api';
 import { getFileIcon, getLanguageFromPath } from './FileIcons';
+import clsx from 'clsx';
 
 interface TreeNode {
   name: string;
@@ -760,24 +762,232 @@ export default function Sidebar() {
     </div>
   );
 
+  const [globalSearchTerm, setGlobalSearchTerm] = useState('');
+  const [globalSearchResults, setGlobalSearchResults] = useState<Array<{ path: string; line_number: number; line_content: string }>>([]);
+  const [isGlobalSearching, setIsGlobalSearching] = useState(false);
+  const [caseSensitiveSearch, setCaseSensitiveSearch] = useState(false);
+
+  const handleGlobalSearch = async (term: string) => {
+    setGlobalSearchTerm(term);
+    if (!term || !projectId) {
+      setGlobalSearchResults([]);
+      return;
+    }
+    setIsGlobalSearching(true);
+    try {
+      const results = await api.searchFiles(projectId, term, caseSensitiveSearch);
+      setGlobalSearchResults(results);
+    } catch {
+      setGlobalSearchResults([]);
+    } finally {
+      setIsGlobalSearching(false);
+    }
+  };
+
+  const renderSearch = () => (
+    <div className="flex flex-col h-full overflow-hidden text-xs">
+      <div className="p-3 border-b border-border bg-panel">
+        <div className="font-semibold text-primaryText uppercase tracking-wider mb-2 text-[11px]">Search in Workspace</div>
+        <div className="flex items-center bg-background border border-border rounded px-2.5 py-1.5 focus-within:border-accent">
+          <Search className="w-3.5 h-3.5 text-secondaryText mr-2 shrink-0" />
+          <input
+            type="text"
+            className="bg-transparent text-primaryText text-xs outline-none flex-1 placeholder:text-secondaryText/60"
+            placeholder="Search text in project..."
+            value={globalSearchTerm}
+            onChange={(e) => handleGlobalSearch(e.target.value)}
+          />
+          <button
+            onClick={() => {
+              setCaseSensitiveSearch(!caseSensitiveSearch);
+              handleGlobalSearch(globalSearchTerm);
+            }}
+            className={clsx(
+              "text-[10px] px-1 rounded font-mono transition-colors",
+              caseSensitiveSearch ? "bg-accent text-white" : "text-secondaryText hover:text-primaryText"
+            )}
+            title="Match Case"
+          >
+            Aa
+          </button>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-2">
+        {isGlobalSearching ? (
+          <div className="p-4 text-center text-secondaryText italic">Searching workspace files...</div>
+        ) : globalSearchResults.length === 0 ? (
+          <div className="p-4 text-center text-secondaryText italic">
+            {globalSearchTerm ? 'No search results found' : 'Type a query to search all project files'}
+          </div>
+        ) : (
+          <div className="space-y-1">
+            <div className="text-[10px] text-secondaryText/80 font-mono px-2 mb-1">
+              {globalSearchResults.length} result{globalSearchResults.length > 1 ? 's' : ''}
+            </div>
+            {globalSearchResults.map((res, idx) => (
+              <div
+                key={idx}
+                onClick={() => handleFileClick(res.path)}
+                className="p-2 rounded hover:bg-secondary cursor-pointer transition-colors border border-transparent hover:border-border/60"
+              >
+                <div className="flex items-center justify-between text-[11px] mb-0.5">
+                  <span className="font-mono text-accent truncate">{res.path}</span>
+                  <span className="text-[10px] text-secondaryText font-mono">L{res.line_number}</span>
+                </div>
+                <div className="font-mono text-[11px] text-slate-300 truncate bg-background/60 px-1.5 py-0.5 rounded">
+                  {res.line_content}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  const renderSourceControl = () => {
+    const generatedSourceFiles = files.filter(f => !f.startsWith('runtime/') && !f.startsWith('planning/'));
+    return (
+      <div className="flex flex-col h-full p-3 text-xs overflow-y-auto">
+        <div className="flex items-center justify-between mb-2">
+          <div className="font-semibold text-primaryText uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+            <GitBranch className="w-3.5 h-3.5 text-accent" />
+            <span>Source Control</span>
+          </div>
+          <span className="text-[10px] bg-secondary text-secondaryText px-1.5 py-0.5 rounded font-mono">
+            {generatedSourceFiles.length} files
+          </span>
+        </div>
+
+        <div className="text-secondaryText text-[11px] mb-3">
+          Local git tracking inside project sandbox (<span className="font-mono text-primaryText">main</span>)
+        </div>
+
+        <div className="text-[10px] uppercase font-semibold text-secondaryText/80 mb-1">Generated / Modified Files</div>
+        <div className="space-y-1">
+          {generatedSourceFiles.map(filePath => (
+            <div
+              key={filePath}
+              onClick={() => handleFileClick(filePath)}
+              className="flex items-center justify-between px-2 py-1.5 rounded hover:bg-secondary cursor-pointer text-[11px]"
+            >
+              <span className="font-mono text-primaryText truncate">{filePath}</span>
+              <span className="font-mono text-emerald-400 text-[10px] bg-emerald-950/60 px-1.5 rounded">
+                GEN
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
   const renderAgents = () => (
-    <div className="flex flex-col h-full p-4 text-xs text-secondaryText">
-      <div className="font-semibold text-primaryText uppercase tracking-wider mb-2">Autonomous Agents</div>
-      <p className="opacity-80">Orchestrating Analysis, Planning, Supervisor, Coding, QA, and Delivery pipeline.</p>
+    <div className="flex flex-col h-full p-4 text-xs text-secondaryText space-y-4 overflow-y-auto">
+      <div>
+        <div className="font-semibold text-primaryText uppercase tracking-wider mb-1">Autonomous Agent Fleet</div>
+        <p className="opacity-80">Six specialized agents collaborating over versioned contracts.</p>
+      </div>
+
+      <div className="space-y-2">
+        <div className="p-2.5 rounded bg-panel border border-border">
+          <div className="font-semibold text-primaryText">Analysis Agent</div>
+          <div className="text-[11px] text-secondaryText mt-0.5">Requirements parsing and specification.</div>
+        </div>
+        <div className="p-2.5 rounded bg-panel border border-border">
+          <div className="font-semibold text-primaryText">Planning & Design Agent</div>
+          <div className="text-[11px] text-secondaryText mt-0.5">Architecture blueprints, database schema, task graph.</div>
+        </div>
+        <div className="p-2.5 rounded bg-panel border border-border">
+          <div className="font-semibold text-primaryText">Supervisor Engine</div>
+          <div className="text-[11px] text-secondaryText mt-0.5">Adaptive orchestration brain and task dispatcher.</div>
+        </div>
+        <div className="p-2.5 rounded bg-panel border border-border">
+          <div className="font-semibold text-primaryText">Coding Agent</div>
+          <div className="text-[11px] text-secondaryText mt-0.5">AST-validated atomic code generation.</div>
+        </div>
+        <div className="p-2.5 rounded bg-panel border border-border">
+          <div className="font-semibold text-primaryText">QA Agent</div>
+          <div className="text-[11px] text-secondaryText mt-0.5">Automated test runners and static security analysis.</div>
+        </div>
+        <div className="p-2.5 rounded bg-panel border border-border">
+          <div className="font-semibold text-primaryText">Delivery Agent</div>
+          <div className="text-[11px] text-secondaryText mt-0.5">Dockerfile packaging and Docker container deployment.</div>
+        </div>
+      </div>
     </div>
   );
 
   const renderMCP = () => (
-    <div className="flex flex-col h-full p-4 text-xs text-secondaryText">
-      <div className="font-semibold text-primaryText uppercase tracking-wider mb-2">MCP Tooling</div>
-      <p className="opacity-80">Model Context Protocol connectors active.</p>
+    <div className="flex flex-col h-full p-4 text-xs text-secondaryText space-y-3 overflow-y-auto">
+      <div>
+        <div className="font-semibold text-primaryText uppercase tracking-wider mb-1">MCP Tooling</div>
+        <p className="opacity-80">Model Context Protocol connectors active for local workspace operations.</p>
+      </div>
+      <div className="p-2.5 rounded bg-panel border border-border">
+        <div className="font-semibold text-primaryText">Filesystem Tool</div>
+        <div className="text-[11px] text-emerald-400 mt-0.5">Active • Read / Write / List</div>
+      </div>
+      <div className="p-2.5 rounded bg-panel border border-border">
+        <div className="font-semibold text-primaryText">Docker Deployment Tool</div>
+        <div className="text-[11px] text-emerald-400 mt-0.5">Active • Build / Run / Health</div>
+      </div>
+    </div>
+  );
+
+  const renderSettings = () => (
+    <div className="flex flex-col h-full p-4 text-xs text-secondaryText space-y-4 overflow-y-auto">
+      <div>
+        <div className="font-semibold text-primaryText uppercase tracking-wider mb-1">Workspace Settings</div>
+        <p className="opacity-80">Editor, Terminal, and Autonomy preferences.</p>
+      </div>
+      <div className="space-y-3">
+        <div className="p-2.5 rounded bg-panel border border-border">
+          <div className="font-semibold text-primaryText">Minimap</div>
+          <div className="text-[11px] text-secondaryText mt-0.5">Enabled for primary editor window.</div>
+        </div>
+        <div className="p-2.5 rounded bg-panel border border-border">
+          <div className="font-semibold text-primaryText">Format on Save</div>
+          <div className="text-[11px] text-secondaryText mt-0.5">Enabled (Ctrl+S).</div>
+        </div>
+        <div className="p-2.5 rounded bg-panel border border-border">
+          <div className="font-semibold text-primaryText">Sandboxed Terminal Shell</div>
+          <div className="text-[11px] text-secondaryText mt-0.5">Subprocess PTY scoped to project folder.</div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderExtensions = () => (
+    <div className="flex flex-col h-full p-4 text-xs text-secondaryText space-y-3 overflow-y-auto">
+      <div>
+        <div className="font-semibold text-primaryText uppercase tracking-wider mb-1">Installed Capabilities</div>
+        <p className="opacity-80">SEAM Native multi-agent software engineering bundle.</p>
+      </div>
+      <div className="p-2.5 rounded bg-panel border border-border">
+        <div className="font-semibold text-primaryText">Monaco Code Editor</div>
+        <div className="text-[11px] text-secondaryText mt-0.5">Syntax highlighting, diffs, breadcrumbs.</div>
+      </div>
+      <div className="p-2.5 rounded bg-panel border border-border">
+        <div className="font-semibold text-primaryText">XTerm.js Terminal</div>
+        <div className="text-[11px] text-secondaryText mt-0.5">Bidirectional interactive shell runtime.</div>
+      </div>
+      <div className="p-2.5 rounded bg-panel border border-border">
+        <div className="font-semibold text-primaryText">ChromaDB RAG Memory</div>
+        <div className="text-[11px] text-secondaryText mt-0.5">Shared organizational cross-project intelligence.</div>
+      </div>
     </div>
   );
 
   const contentMap: Record<string, () => React.ReactNode> = {
     explorer: renderExplorer,
+    search: renderSearch,
+    source_control: renderSourceControl,
     agents: renderAgents,
     mcp: renderMCP,
+    settings: renderSettings,
+    extensions: renderExtensions,
   };
 
   const renderContent = contentMap[activeActivity] || renderExplorer;

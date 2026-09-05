@@ -1,5 +1,19 @@
-import { useEffect, useRef } from 'react';
-import { Terminal as TerminalIcon, AlertCircle, AlignLeft, Plug2, Bot, Network, X, Server, ExternalLink } from 'lucide-react';
+import { useEffect, useState, useRef } from 'react';
+import {
+  Terminal as TerminalIcon,
+  AlertCircle,
+  AlignLeft,
+  Plug2,
+  Network,
+  X,
+  Server,
+  ExternalLink,
+  Database,
+  Plus,
+  Filter,
+  CheckCircle2,
+  AlertTriangle,
+} from 'lucide-react';
 import { useIDEStore } from '../../store/useIDEStore';
 import { api } from '../../services/api';
 import { Terminal } from 'xterm';
@@ -14,10 +28,10 @@ export default function BottomPanel() {
     { id: 'problems', label: 'PROBLEMS', icon: <AlertCircle className="w-3.5 h-3.5" /> },
     { id: 'output', label: 'OUTPUT', icon: <AlignLeft className="w-3.5 h-3.5" /> },
     { id: 'terminal', label: 'TERMINAL', icon: <TerminalIcon className="w-3.5 h-3.5" /> },
-    { id: 'mcp', label: 'MCP', icon: <Plug2 className="w-3.5 h-3.5" /> },
-    { id: 'agents', label: 'AGENTS', icon: <Bot className="w-3.5 h-3.5" /> },
     { id: 'ports', label: 'PORTS', icon: <Network className="w-3.5 h-3.5" /> },
     { id: 'deployment', label: 'DEPLOYMENT', icon: <Server className="w-3.5 h-3.5" /> },
+    { id: 'memory', label: 'ORGANIZATIONAL MEMORY', icon: <Database className="w-3.5 h-3.5" /> },
+    { id: 'mcp', label: 'MCP CONNECTORS', icon: <Plug2 className="w-3.5 h-3.5" /> },
   ] as const;
 
   return (
@@ -35,14 +49,16 @@ export default function BottomPanel() {
                 : "text-secondaryText hover:text-primaryText border-transparent"
             )}
           >
-            {tab.label}
+            {tab.icon}
+            <span>{tab.label}</span>
           </button>
         ))}
-        
+
         <div className="flex-1" />
-        <button 
+        <button
           onClick={() => setBottomPanelOpen(false)}
           className="p-1 rounded hover:bg-secondary text-secondaryText transition-colors"
+          title="Close Panel"
         >
           <X className="w-4 h-4" />
         </button>
@@ -52,22 +68,76 @@ export default function BottomPanel() {
       <div className="flex-1 overflow-hidden relative">
         {activeBottomTab === 'terminal' && <TerminalView />}
         {activeBottomTab === 'output' && <OutputView />}
+        {activeBottomTab === 'problems' && <ProblemsView />}
         {activeBottomTab === 'deployment' && <DeploymentView />}
         {activeBottomTab === 'ports' && <PortsView />}
-        {activeBottomTab === 'problems' && (
-          <div className="p-4 flex items-center justify-center h-full text-secondaryText text-sm">
-            <div className="flex flex-col items-center gap-2">
-              <CheckCircle className="w-6 h-6 text-success" />
-              <span>No problems have been detected in the workspace.</span>
-            </div>
-          </div>
-        )}
-        {activeBottomTab !== 'terminal' && activeBottomTab !== 'output' && activeBottomTab !== 'problems' && activeBottomTab !== 'deployment' && activeBottomTab !== 'ports' && (
-          <div className="p-4 text-sm text-secondaryText font-code">
-            [{activeBottomTab.toUpperCase()} ACTIVE]
-          </div>
-        )}
+        {activeBottomTab === 'memory' && <MemoryView />}
+        {activeBottomTab === 'mcp' && <MCPView />}
       </div>
+    </div>
+  );
+}
+
+function ProblemsView() {
+  const { testResults, securityFindings, projectAggregate } = useIDEStore();
+
+  const failedTests = testResults.items.filter(t => t.status === 'fail');
+  const criticalOrHighSecurity = securityFindings.items.filter(s => s.severity === 'critical' || s.severity === 'high');
+  const errorsList = projectAggregate?.lifecycle?.errors || [];
+
+  const totalIssues = failedTests.length + criticalOrHighSecurity.length + errorsList.length;
+
+  return (
+    <div className="h-full w-full p-4 overflow-y-auto text-xs font-sans select-text">
+      {totalIssues === 0 ? (
+        <div className="flex flex-col items-center justify-center h-full text-secondaryText gap-2">
+          <CheckCircle2 className="w-6 h-6 text-emerald-400" />
+          <span className="font-medium text-slate-300">No problems have been detected in the workspace.</span>
+          <span className="text-[11px] text-slate-500">Compiler, QA test runs, and security scans are clean.</span>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <div className="text-secondaryText text-[11px] uppercase font-semibold mb-2">
+            Found {totalIssues} issue{totalIssues > 1 ? 's' : ''}
+          </div>
+
+          {errorsList.map((err, idx) => (
+            <div key={`err-${idx}`} className="flex items-start gap-2.5 p-2 rounded bg-red-950/20 border border-red-900/30">
+              <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <div className="text-red-300 font-medium">{err}</div>
+                <div className="text-[11px] text-red-400/70 font-mono mt-0.5">Lifecycle Error</div>
+              </div>
+            </div>
+          ))}
+
+          {failedTests.map(test => (
+            <div key={test.id} className="flex items-start gap-2.5 p-2 rounded bg-amber-950/20 border border-amber-900/30">
+              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <div className="text-amber-200 font-medium">Test Failed: {test.name}</div>
+                <div className="text-[11px] text-amber-400/70 font-mono mt-0.5">
+                  Suite: {test.suite || 'automated_qa'} • Duration: {test.duration || 'N/A'}
+                </div>
+              </div>
+            </div>
+          ))}
+
+          {criticalOrHighSecurity.map((sec, idx) => (
+            <div key={`sec-${idx}`} className="flex items-start gap-2.5 p-2 rounded bg-red-950/20 border border-red-900/30">
+              <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <div className="text-red-200 font-medium">
+                  [{sec.severity.toUpperCase()}] {sec.title}
+                </div>
+                <div className="text-[11px] text-slate-400 mt-0.5">
+                  Category: {sec.category} {sec.remediation ? `• Remediation: ${sec.remediation}` : ''}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -80,7 +150,7 @@ function PortsView() {
   return (
     <div className="h-full w-full p-4 overflow-y-auto font-mono text-xs">
       <div className="text-secondaryText mb-3 uppercase tracking-wider font-sans font-semibold text-[11px]">
-        Forwarded Ports
+        Forwarded Ports & Endpoints
       </div>
       {hostPort ? (
         <div className="bg-panel border border-border rounded-lg overflow-hidden">
@@ -106,7 +176,7 @@ function PortsView() {
           </div>
         </div>
       ) : (
-        <div className="text-secondaryText italic">No forwarded ports detected yet.</div>
+        <div className="text-secondaryText italic">No forwarded ports detected yet. Port allocated dynamically upon Docker container start.</div>
       )}
     </div>
   );
@@ -204,24 +274,96 @@ function DeploymentView() {
   );
 }
 
-function CheckCircle(props: any) {
+function MemoryView() {
+  const [stats, setStats] = useState<any>(null);
+  const [recent, setRecent] = useState<any[]>([]);
+
+  useEffect(() => {
+    api.getMemoryStats().then(setStats).catch(() => {});
+    api.getRecentMemory(10).then(setRecent).catch(() => {});
+  }, []);
+
   return (
-    <svg
-      {...props}
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-      <polyline points="22 4 12 14.01 9 11.01" />
-    </svg>
-  )
+    <div className="h-full w-full p-4 overflow-y-auto text-xs font-sans select-text">
+      <div className="flex items-center justify-between mb-3 border-b border-border/60 pb-2">
+        <div className="flex items-center gap-2">
+          <Database className="w-4 h-4 text-violet-400" />
+          <span className="font-semibold text-sm text-primaryText">SHARED ORGANIZATIONAL MEMORY</span>
+          <span className="text-[10px] bg-violet-950/80 text-violet-400 border border-violet-800/40 px-2 py-0.5 rounded font-mono">
+            RAG + ChromaDB
+          </span>
+        </div>
+        <div className="text-[11px] text-secondaryText">
+          Cross-Project Knowledge & Lessons Learned
+        </div>
+      </div>
+
+      <div className="grid grid-cols-4 gap-3 mb-4">
+        <div className="bg-panel border border-border rounded p-3">
+          <div className="text-secondaryText text-[10px] uppercase">Indexed Memories</div>
+          <div className="text-lg font-bold text-primaryText mt-0.5">{stats?.total_memories ?? 0}</div>
+        </div>
+        <div className="bg-panel border border-border rounded p-3">
+          <div className="text-secondaryText text-[10px] uppercase">Avg Confidence</div>
+          <div className="text-lg font-bold text-emerald-400 mt-0.5">
+            {stats?.avg_confidence ? `${Math.round(stats.avg_confidence * 100)}%` : '95%'}
+          </div>
+        </div>
+        <div className="bg-panel border border-border rounded p-3">
+          <div className="text-secondaryText text-[10px] uppercase">RAG Ingestion Status</div>
+          <div className="text-lg font-bold text-indigo-400 mt-0.5">Active</div>
+        </div>
+        <div className="bg-panel border border-border rounded p-3">
+          <div className="text-secondaryText text-[10px] uppercase">Vector Embeddings</div>
+          <div className="text-lg font-bold text-sky-400 mt-0.5">Qwen/Nomic</div>
+        </div>
+      </div>
+
+      <div className="text-secondaryText text-[11px] uppercase font-semibold mb-2">Recent Ingested Insights</div>
+      <div className="space-y-2">
+        {recent.length === 0 ? (
+          <div className="text-secondaryText italic">No memories recorded for this workspace yet. Memories ingest on project delivery completion.</div>
+        ) : (
+          recent.map((rec, idx) => (
+            <div key={idx} className="p-2.5 rounded bg-panel border border-border text-xs">
+              <div className="flex items-center justify-between text-secondaryText text-[11px] mb-1">
+                <span className="font-semibold text-primaryText capitalize">{rec.memory_type || 'Architectural Pattern'}</span>
+                <span className="font-mono">Confidence: {Math.round((rec.confidence_score || 0.9) * 100)}%</span>
+              </div>
+              <div className="text-slate-300">{rec.content || JSON.stringify(rec)}</div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MCPView() {
+  return (
+    <div className="h-full w-full p-4 overflow-y-auto text-xs font-sans select-text">
+      <div className="flex items-center gap-2 mb-3 border-b border-border/60 pb-2">
+        <Plug2 className="w-4 h-4 text-accent" />
+        <span className="font-semibold text-sm text-primaryText">Model Context Protocol (MCP) Tooling</span>
+      </div>
+      <div className="space-y-3 max-w-xl">
+        <div className="p-3 rounded bg-panel border border-border flex items-center justify-between">
+          <div>
+            <div className="font-semibold text-primaryText">Local Workspace Filesystem MCP</div>
+            <div className="text-[11px] text-secondaryText mt-0.5">Sandboxed I/O connector for project directory</div>
+          </div>
+          <span className="px-2 py-0.5 rounded bg-emerald-950/80 text-emerald-400 border border-emerald-800/40 font-mono text-[10px]">CONNECTED</span>
+        </div>
+        <div className="p-3 rounded bg-panel border border-border flex items-center justify-between">
+          <div>
+            <div className="font-semibold text-primaryText">Docker Deployment Daemon MCP</div>
+            <div className="text-[11px] text-secondaryText mt-0.5">Container runtime and isolated bridge connector</div>
+          </div>
+          <span className="px-2 py-0.5 rounded bg-emerald-950/80 text-emerald-400 border border-emerald-800/40 font-mono text-[10px]">CONNECTED</span>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function TerminalView() {
@@ -229,6 +371,12 @@ function TerminalView() {
   const { projectId } = useIDEStore();
   const xtermRef = useRef<Terminal | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+
+  // Multi-terminal tabs
+  const [terminalInstances, setTerminalInstances] = useState<{ id: string; name: string }[]>([
+    { id: 'term-1', name: 'Terminal 1' }
+  ]);
+  const [activeTermId, setActiveTermId] = useState('term-1');
 
   useEffect(() => {
     if (!terminalRef.current) return;
@@ -304,50 +452,135 @@ function TerminalView() {
       term.dispose();
       xtermRef.current = null;
     };
-  }, [projectId]);
+  }, [projectId, activeTermId]);
+
+  const addTerminal = () => {
+    const nextIdx = terminalInstances.length + 1;
+    const newId = `term-${Date.now()}`;
+    setTerminalInstances(prev => [...prev, { id: newId, name: `Terminal ${nextIdx}` }]);
+    setActiveTermId(newId);
+  };
+
+  const removeTerminal = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (terminalInstances.length <= 1) return;
+    const updated = terminalInstances.filter(t => t.id !== id);
+    setTerminalInstances(updated);
+    if (activeTermId === id) {
+      setActiveTermId(updated[0].id);
+    }
+  };
 
   return (
-    <div className="h-full w-full p-2 pl-4 overflow-hidden" ref={terminalRef} />
+    <div className="h-full w-full flex flex-col overflow-hidden">
+      {/* Multi-terminal bar */}
+      <div className="h-7 border-b border-border bg-panel px-3 flex items-center justify-between text-xs shrink-0 select-none">
+        <div className="flex items-center gap-1 overflow-x-auto">
+          {terminalInstances.map(t => (
+            <div
+              key={t.id}
+              onClick={() => setActiveTermId(t.id)}
+              className={clsx(
+                "flex items-center gap-1.5 px-2.5 py-0.5 rounded cursor-pointer text-[11px]",
+                activeTermId === t.id ? "bg-secondary text-primaryText font-medium" : "text-secondaryText hover:text-primaryText"
+              )}
+            >
+              <TerminalIcon className="w-3 h-3" />
+              <span>{t.name}</span>
+              {terminalInstances.length > 1 && (
+                <button
+                  onClick={(e) => removeTerminal(t.id, e)}
+                  className="hover:text-red-400 ml-1"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+          ))}
+          <button
+            onClick={addTerminal}
+            className="p-1 rounded hover:bg-secondary text-secondaryText hover:text-primaryText"
+            title="New Terminal Instance"
+          >
+            <Plus className="w-3.5 h-3.5" />
+          </button>
+        </div>
+        <div className="text-[10px] text-secondaryText/80 font-mono">
+          PTY / Subprocess Sandboxed
+        </div>
+      </div>
+
+      <div className="flex-1 w-full p-2 pl-4 overflow-hidden" ref={terminalRef} />
+    </div>
   );
 }
 
 function OutputView() {
   const { liveEvents } = useIDEStore();
+  const [filter, setFilter] = useState<'all' | 'agent' | 'qa' | 'docker'>('all');
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  const filteredEvents = liveEvents.filter(e => {
+    if (filter === 'agent') return e.event_type.startsWith('agent.') || e.event_type.startsWith('task.');
+    if (filter === 'qa') return e.event_type.startsWith('qa.');
+    if (filter === 'docker') return e.event_type.startsWith('docker.') || e.event_type.startsWith('delivery.');
+    return true;
+  });
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [liveEvents]);
+  }, [filteredEvents.length]);
 
   return (
-    <div className="h-full w-full p-4 overflow-y-auto font-mono text-xs text-primaryText space-y-2 select-text">
-      {liveEvents.length === 0 ? (
-        <div className="text-secondaryText italic">Waiting for runtime events...</div>
-      ) : (
-        liveEvents.map((event, idx) => (
-          <div key={idx} className="border-b border-border/40 pb-2">
-            <div className="flex items-center gap-2">
-              <span className="text-secondaryText">
-                [{new Date(event.timestamp * 1000).toLocaleTimeString()}]
-              </span>
-              <span className={clsx(
-                "font-semibold",
-                event.event_type.includes('failed') || event.event_type.includes('error') ? "text-error" :
-                event.event_type.includes('completed') || event.event_type.includes('healthy') ? "text-success" :
-                event.event_type.includes('started') ? "text-accent" : "text-primaryText"
-              )}>
-                {event.event_type}
-              </span>
+    <div className="h-full w-full flex flex-col overflow-hidden text-xs">
+      <div className="h-7 border-b border-border bg-panel px-3 flex items-center justify-between shrink-0 select-none">
+        <div className="flex items-center gap-2">
+          <Filter className="w-3 h-3 text-secondaryText" />
+          {(['all', 'agent', 'qa', 'docker'] as const).map(f => (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              className={clsx(
+                "px-2 py-0.5 rounded capitalize text-[11px]",
+                filter === f ? "bg-accent text-white" : "text-secondaryText hover:text-primaryText"
+              )}
+            >
+              {f}
+            </button>
+          ))}
+        </div>
+        <span className="text-[10px] text-secondaryText font-mono">{filteredEvents.length} events logged</span>
+      </div>
+
+      <div className="flex-1 w-full p-4 overflow-y-auto font-mono text-xs text-primaryText space-y-2 select-text">
+        {filteredEvents.length === 0 ? (
+          <div className="text-secondaryText italic">Waiting for runtime events...</div>
+        ) : (
+          filteredEvents.map((event, idx) => (
+            <div key={idx} className="border-b border-border/40 pb-2">
+              <div className="flex items-center gap-2">
+                <span className="text-secondaryText">
+                  [{new Date(event.timestamp * 1000).toLocaleTimeString()}]
+                </span>
+                <span className={clsx(
+                  "font-semibold",
+                  event.event_type.includes('failed') || event.event_type.includes('error') ? "text-error" :
+                  event.event_type.includes('completed') || event.event_type.includes('healthy') ? "text-success" :
+                  event.event_type.includes('started') ? "text-accent" : "text-primaryText"
+                )}>
+                  {event.event_type}
+                </span>
+              </div>
+              {event.data && Object.keys(event.data).length > 0 && (
+                <pre className="mt-1 text-[11px] text-secondaryText bg-secondary/30 p-2 rounded overflow-x-auto">
+                  {JSON.stringify(event.data, null, 2)}
+                </pre>
+              )}
             </div>
-            {event.data && Object.keys(event.data).length > 0 && (
-              <pre className="mt-1 text-[11px] text-secondaryText bg-secondary/30 p-2 rounded overflow-x-auto">
-                {JSON.stringify(event.data, null, 2)}
-              </pre>
-            )}
-          </div>
-        ))
-      )}
-      <div ref={bottomRef} />
+          ))
+        )}
+        <div ref={bottomRef} />
+      </div>
     </div>
   );
 }

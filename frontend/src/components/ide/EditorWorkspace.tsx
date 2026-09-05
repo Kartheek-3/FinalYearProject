@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useIDEStore, Tab } from '../../store/useIDEStore';
 import {
   X,
@@ -9,13 +9,23 @@ import {
   Layers,
   CheckCircle2,
   XCircle,
-  ShieldAlert,
   Server,
   Clock,
-  ArrowRight
+  Pin,
+  Columns,
+  Rows,
+  ChevronRight,
+  ShieldCheck,
+  Copy,
 } from 'lucide-react';
 import clsx from 'clsx';
 import Editor, { DiffEditor } from '@monaco-editor/react';
+
+interface TabContextMenuState {
+  x: number;
+  y: number;
+  tabId: string;
+}
 
 export default function EditorWorkspace() {
   const {
@@ -23,17 +33,37 @@ export default function EditorWorkspace() {
     activeTabId,
     setActiveTab,
     closeTab,
+    closeOthers,
+    closeToRight,
+    closeAll,
+    togglePinTab,
+    reorderTabs,
     updateTabContent,
     workspaceMode,
     diffState,
-    setDiffState,
     traceabilityMap,
     projectAggregate,
+    splitEditor,
+    splitOrientation,
+    secondaryTabId,
+    setSplitEditor,
+    testResults,
+    securityFindings,
   } = useIDEStore();
 
   const [previewRefreshKey, setPreviewRefreshKey] = useState(0);
+  const [tabContextMenu, setTabContextMenu] = useState<TabContextMenuState | null>(null);
+  const [draggedTabIndex, setDraggedTabIndex] = useState<number | null>(null);
+
+  // Close tab context menu on window click
+  useEffect(() => {
+    const handleClick = () => setTabContextMenu(null);
+    window.addEventListener('click', handleClick);
+    return () => window.removeEventListener('click', handleClick);
+  }, []);
 
   const activeTab = tabs.find((t: Tab) => t.id === activeTabId);
+  const secondaryTab = tabs.find((t: Tab) => t.id === secondaryTabId) || (tabs.length > 1 ? tabs.find(t => t.id !== activeTabId) : null);
   const activeTraceability = activeTabId ? traceabilityMap[activeTabId] : null;
 
   // Resolve deployment URL from delivery_result
@@ -46,52 +76,127 @@ export default function EditorWorkspace() {
 
   // Resolve architecture from planning artifact
   const architecture = (projectAggregate?.planning_artifact?.result as any)?.architecture;
+  const tasks = projectAggregate?.execution_state?.tasks ? Object.values(projectAggregate.execution_state.tasks) : [];
 
-  // Resolve QA reports
-  const qaReports = projectAggregate?.qa_reports || [];
-  const qualityGates = projectAggregate?.quality_gates || [];
+  // Breadcrumbs computation
+  const breadcrumbParts = activeTab ? activeTab.id.split('/') : [];
 
-  return (
-    <div className="flex flex-col h-full bg-background overflow-hidden select-none">
-      {/* Workspace Tabs (when in EDITOR mode) */}
-      {workspaceMode === 'editor' && (
-        <div className="flex items-center bg-panel border-b border-border overflow-x-auto shrink-0 scrollbar-hide">
-          {tabs.map((tab: Tab) => (
-            <div
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+  const handleTabContextMenu = (e: React.MouseEvent, tabId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setTabContextMenu({ x: e.clientX, y: e.clientY, tabId });
+  };
+
+  const renderTabsBar = () => (
+    <div className="flex items-center bg-panel border-b border-border overflow-x-auto shrink-0 scrollbar-hide select-none">
+      {tabs.map((tab: Tab, idx: number) => {
+        const isSelected = activeTabId === tab.id;
+        return (
+          <div
+            key={tab.id}
+            draggable
+            onDragStart={() => setDraggedTabIndex(idx)}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={() => {
+              if (draggedTabIndex !== null && draggedTabIndex !== idx) {
+                reorderTabs(draggedTabIndex, idx);
+                setDraggedTabIndex(null);
+              }
+            }}
+            onClick={() => setActiveTab(tab.id)}
+            onContextMenu={(e) => handleTabContextMenu(e, tab.id)}
+            className={clsx(
+              "flex items-center gap-2 px-3 py-2 border-r border-border text-xs min-w-[120px] max-w-[220px] cursor-pointer group transition-colors relative",
+              isSelected
+                ? "bg-background text-primaryText border-t-2 border-t-accent font-medium"
+                : "bg-panel text-secondaryText hover:bg-secondary border-t-2 border-t-transparent"
+            )}
+          >
+            {tab.isPinned && <Pin className="w-3 h-3 text-accent shrink-0 -rotate-45" />}
+            <span className="truncate flex-1 font-mono">{tab.title}</span>
+            {tab.isDirty && <div className="w-1.5 h-1.5 rounded-full bg-primaryText opacity-80" />}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                closeTab(tab.id);
+              }}
               className={clsx(
-                "flex items-center gap-2 px-3 py-2 border-r border-border text-xs min-w-[120px] max-w-[220px] cursor-pointer group transition-colors",
-                activeTabId === tab.id
-                  ? "bg-background text-primaryText border-t-2 border-t-accent font-medium"
-                  : "bg-panel text-secondaryText hover:bg-secondary border-t-2 border-t-transparent"
+                "p-0.5 rounded-md hover:bg-border/50",
+                (!tab.isDirty && !isSelected) ? "opacity-0 group-hover:opacity-100" : ""
               )}
+              title="Close (Ctrl+W)"
             >
-              <span className="truncate flex-1 font-mono">{tab.title}</span>
-              {tab.isDirty && <div className="w-1.5 h-1.5 rounded-full bg-primaryText opacity-80" />}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  closeTab(tab.id);
-                }}
-                className={clsx(
-                  "p-0.5 rounded-md hover:bg-border/50",
-                  (!tab.isDirty && activeTabId !== tab.id) ? "opacity-0 group-hover:opacity-100" : ""
-                )}
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          ))}
-          {tabs.length === 0 && (
-            <div className="px-3 py-2 text-xs text-secondaryText italic font-sans">
-              No files open in editor
-            </div>
-          )}
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        );
+      })}
+
+      {tabs.length === 0 && (
+        <div className="px-3 py-2 text-xs text-secondaryText italic font-sans">
+          No files open in editor
         </div>
       )}
 
-      {/* Traceability Banner (when in EDITOR mode and active file has traceability) */}
+      <div className="flex-1" />
+
+      {/* Split Editor Toggle Action */}
+      {tabs.length > 0 && (
+        <div className="flex items-center px-2 gap-1 border-l border-border/60">
+          <button
+            onClick={() => setSplitEditor(!splitEditor, 'horizontal')}
+            className={clsx(
+              "p-1 rounded text-secondaryText hover:text-primaryText transition-colors",
+              splitEditor && splitOrientation === 'horizontal' ? "bg-secondary text-primaryText" : ""
+            )}
+            title={splitEditor ? "Close Split Group" : "Split Editor Right"}
+          >
+            <Columns className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={() => setSplitEditor(!splitEditor, 'vertical')}
+            className={clsx(
+              "p-1 rounded text-secondaryText hover:text-primaryText transition-colors",
+              splitEditor && splitOrientation === 'vertical' ? "bg-secondary text-primaryText" : ""
+            )}
+            title="Split Editor Down"
+          >
+            <Rows className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+
+  const renderBreadcrumbs = () => {
+    if (!activeTab || breadcrumbParts.length === 0) return null;
+    return (
+      <div className="h-6 bg-background border-b border-border/60 px-4 flex items-center text-[11px] text-secondaryText font-mono shrink-0 select-none overflow-x-auto">
+        <span className="text-slate-400 font-semibold">{projectAggregate?.project_id ? `seam://${projectAggregate.project_id.substring(0, 10)}` : 'workspace'}</span>
+        {breadcrumbParts.map((part, index) => (
+          <div key={index} className="flex items-center">
+            <ChevronRight className="w-3 h-3 mx-1 opacity-40 shrink-0" />
+            <span className={clsx(
+              "truncate hover:text-primaryText cursor-pointer transition-colors",
+              index === breadcrumbParts.length - 1 ? "text-primaryText font-medium" : ""
+            )}>
+              {part}
+            </span>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  return (
+    <div className="flex flex-col h-full bg-background overflow-hidden select-none relative">
+      {/* 1. Tabs Bar when in editor mode */}
+      {workspaceMode === 'editor' && renderTabsBar()}
+
+      {/* 2. Breadcrumbs Bar */}
+      {workspaceMode === 'editor' && renderBreadcrumbs()}
+
+      {/* 3. Traceability Banner (when Coding Agent modified file) */}
       {workspaceMode === 'editor' && activeTraceability && (
         <div className="bg-secondary/40 border-b border-border/60 px-4 py-1.5 flex items-center justify-between text-xs text-secondaryText shrink-0">
           <div className="flex items-center gap-2">
@@ -109,48 +214,95 @@ export default function EditorWorkspace() {
         </div>
       )}
 
-      {/* Workspace Body depending on WorkspaceMode */}
+      {/* 4. Workspace View Body */}
       <div className="flex-1 overflow-hidden relative">
-        {/* 1. EDITOR MODE */}
+        {/* MODE: EDITOR (with optional Split Editor) */}
         {workspaceMode === 'editor' && (
-          <div className="h-full w-full">
-            {activeTab ? (
-              <Editor
-                height="100%"
-                language={activeTab.language}
-                theme="vs-dark"
-                value={activeTab.content}
-                onChange={(val: string | undefined) => {
-                  if (val !== undefined) updateTabContent(activeTab.id, val);
-                }}
-                options={{
-                  minimap: { enabled: false },
-                  fontSize: 13,
-                  fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-                  lineHeight: 22,
-                  padding: { top: 16 },
-                  scrollBeyondLastLine: false,
-                  smoothScrolling: true,
-                  cursorBlinking: "smooth",
-                  cursorSmoothCaretAnimation: "on",
-                  formatOnPaste: true,
-                }}
-              />
-            ) : (
-              <div className="flex items-center justify-center h-full text-secondaryText">
-                <div className="text-center p-8">
-                  <div className="text-4xl mb-4 text-accent">✦</div>
-                  <h2 className="text-lg font-medium text-primaryText">AI Autonomous Workspace</h2>
-                  <p className="mt-2 text-sm opacity-80 max-w-sm">
-                    Select a file in the Project Explorer or wait for the Coding Agent to generate application code.
-                  </p>
+          <div className={clsx(
+            "h-full w-full",
+            splitEditor ? (splitOrientation === 'horizontal' ? "flex flex-row" : "flex flex-col") : ""
+          )}>
+            {/* Primary Group */}
+            <div className={clsx("h-full min-w-0 min-h-0", splitEditor ? "flex-1 border-r border-border" : "w-full")}>
+              {activeTab ? (
+                <Editor
+                  height="100%"
+                  language={activeTab.language}
+                  theme="vs-dark"
+                  value={activeTab.content}
+                  onChange={(val) => {
+                    if (val !== undefined) updateTabContent(activeTab.id, val);
+                  }}
+                  options={{
+                    minimap: { enabled: true },
+                    fontSize: 13,
+                    fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                    lineHeight: 22,
+                    padding: { top: 16 },
+                    scrollBeyondLastLine: false,
+                    smoothScrolling: true,
+                    cursorBlinking: "smooth",
+                    cursorSmoothCaretAnimation: "on",
+                    formatOnPaste: true,
+                  }}
+                />
+              ) : (
+                <div className="flex items-center justify-center h-full text-secondaryText">
+                  <div className="text-center p-8">
+                    <div className="text-4xl mb-4 text-accent">✦</div>
+                    <h2 className="text-lg font-medium text-primaryText">AI Autonomous Workspace</h2>
+                    <p className="mt-2 text-sm opacity-80 max-w-sm">
+                      Select a file in the Project Explorer or press <span className="text-accent font-mono">Ctrl+P</span> to quick open files.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Secondary Split Group */}
+            {splitEditor && (
+              <div className="h-full min-w-0 min-h-0 flex-1 flex flex-col bg-background">
+                <div className="h-8 border-b border-border bg-panel px-3 flex items-center justify-between text-xs shrink-0 font-mono text-secondaryText">
+                  <span>{secondaryTab?.title || 'Split Group'}</span>
+                  <button
+                    onClick={() => setSplitEditor(false)}
+                    className="p-1 rounded hover:bg-secondary text-secondaryText hover:text-primaryText"
+                    title="Close Split Editor"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <div className="flex-1 overflow-hidden">
+                  {secondaryTab ? (
+                    <Editor
+                      height="100%"
+                      language={secondaryTab.language}
+                      theme="vs-dark"
+                      value={secondaryTab.content}
+                      onChange={(val) => {
+                        if (val !== undefined) updateTabContent(secondaryTab.id, val);
+                      }}
+                      options={{
+                        minimap: { enabled: false },
+                        fontSize: 13,
+                        fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                        lineHeight: 22,
+                        padding: { top: 16 },
+                        scrollBeyondLastLine: false,
+                      }}
+                    />
+                  ) : (
+                    <div className="flex items-center justify-center h-full text-secondaryText text-xs italic">
+                      Select another tab to view side-by-side
+                    </div>
+                  )}
                 </div>
               </div>
             )}
           </div>
         )}
 
-        {/* 2. PREVIEW MODE */}
+        {/* MODE: PREVIEW */}
         {workspaceMode === 'preview' && (
           <div className="h-full w-full flex flex-col bg-background select-text">
             <div className="h-10 border-b border-border bg-panel px-4 flex items-center justify-between shrink-0">
@@ -198,339 +350,325 @@ export default function EditorWorkspace() {
                 <iframe
                   key={previewRefreshKey}
                   src={deploymentUrl}
-                  title="Application Preview"
                   className="w-full h-full border-0 bg-white"
+                  title="App Live Preview"
+                  sandbox="allow-scripts allow-same-origin allow-forms"
                 />
               ) : (
-                <div className="flex items-center justify-center h-full text-secondaryText">
-                  <div className="text-center p-8 max-w-md">
-                    <Server className="w-12 h-12 text-secondaryText/50 mx-auto mb-3 animate-pulse" />
-                    <h3 className="text-base font-medium text-primaryText mb-1">
-                      Container Deployment in Progress
-                    </h3>
-                    <p className="text-xs text-secondaryText leading-relaxed">
-                      Once the Delivery Agent creates the Dockerfile and starts the container, your live application will automatically be embedded here.
-                    </p>
-                  </div>
+                <div className="flex flex-col items-center justify-center h-full text-secondaryText p-8">
+                  <Server className="w-12 h-12 text-border mb-4 animate-pulse" />
+                  <div className="text-sm font-medium text-primaryText">No Active Deployment</div>
+                  <p className="text-xs max-w-sm text-center mt-2 opacity-80">
+                    The Delivery Agent will compile the Dockerfile, build the image, and start the container on an allocated port.
+                  </p>
                 </div>
               )}
             </div>
           </div>
         )}
 
-        {/* 3. DIFF MODE */}
+        {/* MODE: DIFF */}
         {workspaceMode === 'diff' && (
           <div className="h-full w-full flex flex-col bg-background">
             <div className="h-10 border-b border-border bg-panel px-4 flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2 text-xs">
                 <GitCompare className="w-4 h-4 text-accent" />
-                <span className="font-semibold text-primaryText">AGENT CODE DIFF</span>
-                {diffState && (
-                  <span className="text-secondaryText font-mono text-xs">
-                    ({diffState.path})
-                  </span>
+                <span className="font-semibold text-primaryText">AUTONOMOUS REWORK DIFF INSPECTOR</span>
+                {diffState?.path && (
+                  <span className="font-mono text-secondaryText">({diffState.path})</span>
                 )}
               </div>
-              {diffState && (
-                <div className="flex items-center gap-3 text-xs">
-                  <span className="text-secondaryText italic">
-                    {diffState.reason || 'Code modified during rework'}
-                  </span>
-                  <button
-                    onClick={() => setDiffState(null)}
-                    className="p-1 rounded hover:bg-secondary text-secondaryText"
-                    title="Close Diff"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
+              {diffState?.reason && (
+                <span className="text-xs text-warning/90 font-mono">
+                  Remediation: {diffState.reason}
+                </span>
               )}
             </div>
-
             <div className="flex-1 overflow-hidden">
-              {diffState ? (
-                <DiffEditor
-                  height="100%"
-                  language={activeTab?.language || 'python'}
-                  theme="vs-dark"
-                  original={diffState.original}
-                  modified={diffState.modified}
-                  options={{
-                    readOnly: true,
-                    renderSideBySide: true,
-                    minimap: { enabled: false },
-                    fontSize: 13,
-                    fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-                  }}
-                />
-              ) : (
-                <div className="flex items-center justify-center h-full text-secondaryText">
-                  <div className="text-center p-8">
-                    <GitCompare className="w-10 h-10 mx-auto mb-3 opacity-40" />
-                    <h3 className="text-sm font-medium text-primaryText">No Active Diff</h3>
-                    <p className="mt-1 text-xs opacity-75">
-                      When the Coding Agent reworks or updates existing files after QA reviews, diffs appear here automatically.
-                    </p>
-                  </div>
-                </div>
-              )}
+              <DiffEditor
+                height="100%"
+                language="python"
+                theme="vs-dark"
+                original={diffState?.original || '# Original file version before autonomous QA rework'}
+                modified={diffState?.modified || '# Remediated file version generated by Coding Agent'}
+                options={{
+                  fontSize: 13,
+                  fontFamily: "'JetBrains Mono', monospace",
+                  lineHeight: 22,
+                  readOnly: true,
+                }}
+              />
             </div>
           </div>
         )}
 
-        {/* 4. ARCHITECTURE MODE */}
+        {/* MODE: ARCHITECTURE */}
         {workspaceMode === 'architecture' && (
-          <div className="h-full w-full overflow-y-auto p-6 bg-background text-primaryText select-text">
-            <div className="max-w-4xl mx-auto space-y-6">
-              <div className="border-b border-border/80 pb-4">
-                <h2 className="text-lg font-semibold flex items-center gap-2">
-                  <Layers className="w-5 h-5 text-accent" />
-                  <span>Autonomous Architecture Design</span>
-                </h2>
-                <p className="text-xs text-secondaryText mt-1">
-                  Generated by Planning Agent from user requirements.
-                </p>
-              </div>
-
-              {architecture ? (
-                <div className="space-y-6">
-                  {/* Style & Pattern */}
-                  <div className="bg-panel border border-border rounded-lg p-4">
-                    <div className="text-xs font-semibold text-secondaryText uppercase tracking-wider mb-2">
-                      Architectural Style
-                    </div>
-                    <div className="text-sm font-mono text-accent bg-secondary/40 p-2.5 rounded border border-border/60">
-                      {architecture.style || 'Modular Component Architecture'}
-                    </div>
-                  </div>
-
-                  {/* Components */}
-                  {architecture.components && architecture.components.length > 0 && (
-                    <div className="bg-panel border border-border rounded-lg p-4">
-                      <div className="text-xs font-semibold text-secondaryText uppercase tracking-wider mb-3">
-                        Planned Components ({architecture.components.length})
-                      </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        {architecture.components.map((comp: any, i: number) => (
-                          <div key={i} className="p-3 bg-secondary/30 rounded border border-border/50 text-xs">
-                            <div className="font-semibold text-primaryText mb-1 flex items-center gap-1.5">
-                              <span className="w-2 h-2 rounded-full bg-accent" />
-                              <span>{comp.name}</span>
-                            </div>
-                            <p className="text-secondaryText text-[11px] leading-relaxed mb-2">
-                              {comp.description}
-                            </p>
-                            {comp.responsibilities && (
-                              <div className="text-[10px] text-secondaryText/80 space-y-1 border-t border-border/40 pt-1.5">
-                                {comp.responsibilities.map((r: string, idx: number) => (
-                                  <div key={idx} className="flex items-center gap-1">
-                                    <ArrowRight className="w-2.5 h-2.5 text-accent shrink-0" />
-                                    <span className="truncate">{r}</span>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Data Models */}
-                  {architecture.data_models && architecture.data_models.length > 0 && (
-                    <div className="bg-panel border border-border rounded-lg p-4">
-                      <div className="text-xs font-semibold text-secondaryText uppercase tracking-wider mb-3">
-                        Data Entities & Schema
-                      </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        {architecture.data_models.map((model: any, idx: number) => (
-                          <div key={idx} className="p-3 bg-secondary/30 rounded border border-border/50 text-xs font-mono">
-                            <div className="font-bold text-accent mb-2">{model.name}</div>
-                            {model.fields && (
-                              <div className="space-y-1 text-[11px] text-secondaryText">
-                                {Object.entries(model.fields).map(([k, v]: [string, any]) => (
-                                  <div key={k} className="flex justify-between border-b border-border/30 pb-0.5">
-                                    <span className="text-primaryText">{k}</span>
-                                    <span className="text-secondaryText/70">{String(v)}</span>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="p-8 text-center text-secondaryText">
-                  <Layers className="w-8 h-8 mx-auto mb-2 opacity-40" />
-                  <span>Architecture artifact has not been produced by Planning Agent yet.</span>
-                </div>
-              )}
+          <div className="h-full w-full p-6 overflow-y-auto font-sans text-xs space-y-6 select-text">
+            <div className="border-b border-border/80 pb-4">
+              <h2 className="text-base font-semibold text-primaryText flex items-center gap-2">
+                <Layers className="w-5 h-5 text-accent" />
+                <span>Autonomous Task Graph & Architectural Blueprint</span>
+              </h2>
+              <p className="text-secondaryText text-xs mt-1">
+                Decomposed by Planning & Design Agent; orchestrated dynamically by Supervisor.
+              </p>
             </div>
-          </div>
-        )}
 
-        {/* 5. TESTS MODE */}
-        {workspaceMode === 'tests' && (
-          <div className="h-full w-full overflow-y-auto p-6 bg-background text-primaryText select-text">
-            <div className="max-w-4xl mx-auto space-y-6">
-              <div className="border-b border-border/80 pb-4 flex items-center justify-between">
-                <div>
-                  <h2 className="text-lg font-semibold flex items-center gap-2">
-                    <CheckCircle2 className="w-5 h-5 text-success" />
-                    <span>Automated QA & Test Execution</span>
-                  </h2>
-                  <p className="text-xs text-secondaryText mt-1">
-                    Results from real QA Agent verification and automated testing suites.
-                  </p>
-                </div>
-                <div className="flex items-center gap-3 text-xs">
-                  <span className="px-2 py-1 rounded bg-success/20 text-success border border-success/30 font-medium">
-                    {qualityGates.filter(g => g.status === 'passed').length} Passed
-                  </span>
-                  <span className="px-2 py-1 rounded bg-error/20 text-error border border-error/30 font-medium">
-                    {qualityGates.filter(g => g.status === 'rework_required' || g.status === 'blocked').length} Failed
-                  </span>
-                </div>
-              </div>
-
-              {qaReports.length > 0 ? (
-                <div className="space-y-4">
-                  {qaReports.map((report: any, idx: number) => (
-                    <div key={idx} className="bg-panel border border-border rounded-lg p-4 space-y-3">
-                      <div className="flex items-center justify-between border-b border-border/60 pb-2">
-                        <div className="flex items-center gap-2">
-                          {report.verdict === 'pass' ? (
-                            <CheckCircle2 className="w-4 h-4 text-success" />
-                          ) : (
-                            <XCircle className="w-4 h-4 text-error" />
-                          )}
-                          <span className="text-xs font-mono font-bold text-primaryText">
-                            Task: {report.task_id}
+            {/* Visual Task Graph */}
+            <div>
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-secondaryText mb-3">
+                Supervisor Work Graph
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {tasks.length > 0 ? (
+                  tasks.map((task: any) => (
+                    <div
+                      key={task.task_id}
+                      className={clsx(
+                        "p-3 rounded-lg border flex flex-col justify-between transition-all",
+                        task.status === 'completed' ? "bg-emerald-950/20 border-emerald-800/40" :
+                        task.status === 'in_progress' ? "bg-indigo-950/30 border-indigo-700/60 shadow-md" :
+                        task.status === 'rework_required' ? "bg-amber-950/20 border-amber-800/40" :
+                        "bg-panel border-border"
+                      )}
+                    >
+                      <div>
+                        <div className="flex items-center justify-between text-[11px] mb-1">
+                          <span className="font-mono text-secondaryText">{task.task_id}</span>
+                          <span className={clsx(
+                            "px-1.5 py-0.5 rounded text-[10px] font-mono uppercase font-semibold",
+                            task.status === 'completed' ? "bg-emerald-900/60 text-emerald-300" :
+                            task.status === 'in_progress' ? "bg-indigo-900/60 text-indigo-300 animate-pulse" :
+                            task.status === 'rework_required' ? "bg-amber-900/60 text-amber-300" :
+                            "bg-secondary text-secondaryText"
+                          )}>
+                            {task.status}
                           </span>
                         </div>
-                        <span className={clsx(
-                          "px-2 py-0.5 rounded text-[11px] font-mono font-semibold uppercase",
-                          report.verdict === 'pass' ? "bg-success/20 text-success" : "bg-error/20 text-error"
-                        )}>
-                          {report.verdict}
-                        </span>
+                        <div className="font-medium text-primaryText mt-1">{task.title || task.name || task.task_id}</div>
+                        {task.description && (
+                          <div className="text-secondaryText text-[11px] mt-1 line-clamp-2">{task.description}</div>
+                        )}
                       </div>
-
-                      <div className="text-xs text-secondaryText leading-relaxed">
-                        {report.summary}
+                      <div className="mt-3 pt-2 border-t border-border/50 text-[10px] text-secondaryText/80 flex items-center justify-between font-mono">
+                        <span>Attempts: {task.attempt_count || 1}</span>
+                        <span>Rework: {task.rework_count || 0}</span>
                       </div>
-
-                      {/* Passed Tests */}
-                      {report.passed_tests && report.passed_tests.length > 0 && (
-                        <div className="space-y-1">
-                          <div className="text-[11px] font-semibold text-secondaryText uppercase tracking-wider">
-                            Verified Tests ({report.passed_tests.length})
-                          </div>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5">
-                            {report.passed_tests.map((t: string, tidx: number) => (
-                              <div key={tidx} className="flex items-center gap-1.5 text-xs text-success bg-success/5 p-1.5 rounded border border-success/10">
-                                <CheckCircle2 className="w-3 h-3 shrink-0" />
-                                <span className="font-mono text-[11px] truncate">{t}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Failed Tests */}
-                      {report.failed_tests && report.failed_tests.length > 0 && (
-                        <div className="space-y-1">
-                          <div className="text-[11px] font-semibold text-error uppercase tracking-wider">
-                            Failed Tests ({report.failed_tests.length})
-                          </div>
-                          <div className="grid grid-cols-1 gap-1.5">
-                            {report.failed_tests.map((t: string, tidx: number) => (
-                              <div key={tidx} className="flex items-center gap-1.5 text-xs text-error bg-error/5 p-1.5 rounded border border-error/10">
-                                <XCircle className="w-3 h-3 shrink-0" />
-                                <span className="font-mono text-[11px]">{t}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
                     </div>
-                  ))}
+                  ))
+                ) : (
+                  <div className="col-span-3 text-secondaryText italic p-4 bg-panel rounded border border-border">
+                    Autonomous planning state will populate once requirements analysis finishes.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Architecture Details */}
+            {architecture && (
+              <div className="bg-panel border border-border rounded-lg p-4 space-y-3">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-secondaryText">
+                  System Architecture Patterns
+                </h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <span className="text-secondaryText text-[11px]">Primary Pattern:</span>
+                    <div className="text-primaryText font-medium mt-0.5">{architecture.pattern || 'Modular Microservice'}</div>
+                  </div>
+                  <div>
+                    <span className="text-secondaryText text-[11px]">Data Storage:</span>
+                    <div className="text-primaryText font-medium mt-0.5">{architecture.database || 'SQLite / Relational'}</div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* MODE: TESTS */}
+        {workspaceMode === 'tests' && (
+          <div className="h-full w-full p-6 overflow-y-auto font-sans text-xs space-y-4 select-text">
+            <div className="border-b border-border/80 pb-4 flex items-center justify-between">
+              <div>
+                <h2 className="text-base font-semibold text-primaryText flex items-center gap-2">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                  <span>Automated QA & Test Suite Verification</span>
+                </h2>
+                <p className="text-secondaryText text-xs mt-1">
+                  Executes unit, functional, integration, and regression tests autonomously.
+                </p>
+              </div>
+              <div className="flex items-center gap-3 text-xs font-mono">
+                <span className="px-2.5 py-1 rounded bg-emerald-950/60 text-emerald-300 border border-emerald-800/40">
+                  Passed: {testResults.passed}
+                </span>
+                <span className="px-2.5 py-1 rounded bg-red-950/60 text-red-300 border border-red-800/40">
+                  Failed: {testResults.failed}
+                </span>
+                <span className="px-2.5 py-1 rounded bg-secondary text-secondaryText border border-border">
+                  Skipped: {testResults.skipped}
+                </span>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              {testResults.items.length === 0 ? (
+                <div className="p-8 text-center text-secondaryText italic bg-panel rounded border border-border">
+                  No tests executed yet. Test cases will run during the autonomous QA stage.
                 </div>
               ) : (
-                <div className="p-8 text-center text-secondaryText">
-                  <CheckCircle2 className="w-8 h-8 mx-auto mb-2 opacity-40" />
-                  <span>No QA test reports recorded yet. Tests run automatically after Coding tasks.</span>
-                </div>
+                testResults.items.map(t => (
+                  <div key={t.id} className="flex items-center justify-between p-3 rounded bg-panel border border-border">
+                    <div className="flex items-center gap-2.5">
+                      {t.status === 'pass' ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                      ) : (
+                        <XCircle className="w-4 h-4 text-red-400" />
+                      )}
+                      <div>
+                        <div className="font-mono text-primaryText font-medium">{t.name}</div>
+                        <div className="text-[11px] text-secondaryText">{t.suite || 'Backend Automated Suite'}</div>
+                      </div>
+                    </div>
+                    <div className="font-mono text-[11px] text-secondaryText">
+                      {t.duration || '12ms'}
+                    </div>
+                  </div>
+                ))
               )}
             </div>
           </div>
         )}
 
-        {/* 6. QA MODE (Findings & Remediation) */}
+        {/* MODE: QA / SECURITY */}
         {workspaceMode === 'qa' && (
-          <div className="h-full w-full overflow-y-auto p-6 bg-background text-primaryText select-text">
-            <div className="max-w-4xl mx-auto space-y-6">
-              <div className="border-b border-border/80 pb-4">
-                <h2 className="text-lg font-semibold flex items-center gap-2">
-                  <ShieldAlert className="w-5 h-5 text-amber-400" />
-                  <span>QA Findings & Security Review</span>
+          <div className="h-full w-full p-6 overflow-y-auto font-sans text-xs space-y-4 select-text">
+            <div className="border-b border-border/80 pb-4 flex items-center justify-between">
+              <div>
+                <h2 className="text-base font-semibold text-primaryText flex items-center gap-2">
+                  <ShieldCheck className="w-5 h-5 text-amber-400" />
+                  <span>Cyber Security & Code Quality Gate</span>
                 </h2>
-                <p className="text-xs text-secondaryText mt-1">
-                  Code review issues, security findings, and remediation feedback sent to the Supervisor.
+                <p className="text-secondaryText text-xs mt-1">
+                  Dependency safety, secret leakage, OWASP standards, and requirement adherence.
                 </p>
               </div>
+              <div className="flex items-center gap-2 text-xs font-mono">
+                <span className="px-2 py-0.5 rounded bg-red-950/60 text-red-300 border border-red-800/40">
+                  Critical: {securityFindings.critical}
+                </span>
+                <span className="px-2 py-0.5 rounded bg-orange-950/60 text-orange-300 border border-orange-800/40">
+                  High: {securityFindings.high}
+                </span>
+                <span className="px-2 py-0.5 rounded bg-amber-950/60 text-amber-300 border border-amber-800/40">
+                  Medium: {securityFindings.medium}
+                </span>
+              </div>
+            </div>
 
-              {qaReports.some(r => r.issues && r.issues.length > 0) ? (
-                <div className="space-y-4">
-                  {qaReports.map((report: any, idx: number) => {
-                    if (!report.issues || report.issues.length === 0) return null;
-                    return (
-                      <div key={idx} className="bg-panel border border-border rounded-lg p-4 space-y-3">
-                        <div className="text-xs font-mono font-bold text-primaryText flex items-center gap-2">
-                          <span className="text-accent">Task:</span> {report.task_id}
-                        </div>
-                        <div className="space-y-2">
-                          {report.issues.map((issue: any, iidx: number) => (
-                            <div key={iidx} className="p-3 bg-secondary/40 rounded border border-border/60 text-xs space-y-1">
-                              <div className="flex items-center justify-between">
-                                <span className="font-semibold text-primaryText">{issue.title || issue.description}</span>
-                                <span className={clsx(
-                                  "text-[10px] font-mono px-1.5 py-0.5 rounded uppercase font-semibold",
-                                  issue.severity === 'critical' ? 'bg-error/30 text-error' :
-                                  issue.severity === 'high' ? 'bg-orange-950/40 text-orange-400' :
-                                  'bg-amber-950/40 text-amber-400'
-                                )}>
-                                  {issue.severity || 'issue'}
-                                </span>
-                              </div>
-                              {issue.remediation && (
-                                <div className="text-secondaryText text-[11px] pt-1">
-                                  <span className="text-accent font-medium">Remediation:</span> {issue.remediation}
-                                </div>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })}
+            <div className="space-y-2">
+              {securityFindings.items.length === 0 ? (
+                <div className="p-8 text-center text-secondaryText italic bg-panel rounded border border-border">
+                  No security vulnerabilities detected. Code passed automated static analysis and dependency check.
                 </div>
               ) : (
-                <div className="p-8 text-center text-secondaryText">
-                  <ShieldAlert className="w-8 h-8 mx-auto mb-2 opacity-40 text-success" />
-                  <span className="text-sm font-medium text-primaryText block">No Blocking Issues Found</span>
-                  <span className="text-xs opacity-75 mt-1 block">
-                    All quality gate evaluations passed standards with zero critical security or code flaws.
-                  </span>
-                </div>
+                securityFindings.items.map((sec, idx) => (
+                  <div key={idx} className="p-3 rounded bg-panel border border-border space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold text-primaryText">{sec.title}</span>
+                      <span className={clsx(
+                        "px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase",
+                        sec.severity === 'critical' ? "bg-red-900/60 text-red-200" :
+                        sec.severity === 'high' ? "bg-orange-900/60 text-orange-200" :
+                        "bg-amber-900/60 text-amber-200"
+                      )}>
+                        {sec.severity}
+                      </span>
+                    </div>
+                    <div className="text-secondaryText text-[11px]">
+                      Category: {sec.category}
+                    </div>
+                    {sec.remediation && (
+                      <div className="text-emerald-400 text-[11px] font-mono bg-emerald-950/20 p-2 rounded border border-emerald-900/30">
+                        Remediation: {sec.remediation}
+                      </div>
+                    )}
+                  </div>
+                ))
               )}
             </div>
           </div>
         )}
       </div>
+
+      {/* Tab Context Menu */}
+      {tabContextMenu && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{ top: tabContextMenu.y, left: tabContextMenu.x }}
+          className="fixed z-50 w-48 bg-panel border border-border rounded-md shadow-2xl py-1 text-xs select-none"
+        >
+          <button
+            onClick={() => {
+              closeTab(tabContextMenu.tabId);
+              setTabContextMenu(null);
+            }}
+            className="w-full text-left px-3 py-1.5 hover:bg-secondary flex items-center justify-between text-secondaryText hover:text-primaryText"
+          >
+            <span>Close</span>
+            <span className="font-mono text-[10px] text-secondaryText/60">Ctrl+W</span>
+          </button>
+          <button
+            onClick={() => {
+              closeOthers(tabContextMenu.tabId);
+              setTabContextMenu(null);
+            }}
+            className="w-full text-left px-3 py-1.5 hover:bg-secondary text-secondaryText hover:text-primaryText"
+          >
+            Close Others
+          </button>
+          <button
+            onClick={() => {
+              closeToRight(tabContextMenu.tabId);
+              setTabContextMenu(null);
+            }}
+            className="w-full text-left px-3 py-1.5 hover:bg-secondary text-secondaryText hover:text-primaryText"
+          >
+            Close to the Right
+          </button>
+          <button
+            onClick={() => {
+              closeAll();
+              setTabContextMenu(null);
+            }}
+            className="w-full text-left px-3 py-1.5 hover:bg-secondary text-secondaryText hover:text-primaryText"
+          >
+            Close All
+          </button>
+          <div className="border-t border-border my-1" />
+          <button
+            onClick={() => {
+              togglePinTab(tabContextMenu.tabId);
+              setTabContextMenu(null);
+            }}
+            className="w-full text-left px-3 py-1.5 hover:bg-secondary flex items-center gap-2 text-secondaryText hover:text-primaryText"
+          >
+            <Pin className="w-3.5 h-3.5" />
+            <span>Pin / Unpin Tab</span>
+          </button>
+          <button
+            onClick={() => {
+              navigator.clipboard?.writeText(tabContextMenu.tabId);
+              setTabContextMenu(null);
+            }}
+            className="w-full text-left px-3 py-1.5 hover:bg-secondary flex items-center gap-2 text-secondaryText hover:text-primaryText"
+          >
+            <Copy className="w-3.5 h-3.5" />
+            <span>Copy Relative Path</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }

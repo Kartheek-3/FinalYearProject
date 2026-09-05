@@ -118,6 +118,9 @@ export const api = {
   getProjectStatus: (id: string): Promise<{ project_id: string; is_running: boolean; stage: string }> =>
     authFetch(`${API_BASE}/projects/${id}/status`).then(handleResponse),
 
+  searchFiles: (id: string, q: string, caseSensitive = false): Promise<Array<{ path: string; line_number: number; line_content: string }>> =>
+    authFetch(`${API_BASE}/projects/${id}/search?q=${encodeURIComponent(q)}&case_sensitive=${caseSensitive}`).then(handleResponse),
+
   getProjectEvents: (id: string): Promise<RuntimeEvent[]> =>
     authFetch(`${API_BASE}/projects/${id}/events`).then(handleResponse),
 };

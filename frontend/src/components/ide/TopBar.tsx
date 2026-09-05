@@ -6,9 +6,10 @@ import { useAuth } from '../../auth/useAuth';
 
 interface TopBarProps {
   onQuickOpen?: () => void;
+  onCommandPalette?: () => void;
 }
 
-export default function TopBar({ onQuickOpen }: TopBarProps) {
+export default function TopBar({ onQuickOpen, onCommandPalette }: TopBarProps) {
   const {
     toggleSidebar,
     sidebarOpen,
@@ -55,6 +56,7 @@ export default function TopBar({ onQuickOpen }: TopBarProps) {
         <div 
           onClick={onQuickOpen}
           className="flex items-center bg-background border border-border rounded-md px-3 py-1 flex-1 text-sm text-secondaryText hover:border-accent/50 transition-colors cursor-pointer group"
+          title="Quick Open (Ctrl+P)"
         >
           <Search className="w-4 h-4 mr-2 opacity-50 group-hover:opacity-100" />
           <span className="flex-1 text-center font-medium opacity-80">Quick Open Files</span>
@@ -64,16 +66,32 @@ export default function TopBar({ onQuickOpen }: TopBarProps) {
             <span className="bg-panel px-1 rounded">P</span>
           </div>
         </div>
+
+        <button
+          onClick={onCommandPalette}
+          className="flex items-center gap-1 bg-background border border-border rounded-md px-2.5 py-1 text-xs text-secondaryText hover:text-primaryText hover:border-accent/50 transition-colors"
+          title="Command Palette (Ctrl+Shift+P)"
+        >
+          <span className="font-mono text-accent font-bold">&gt;</span>
+          <span className="hidden sm:inline font-medium">Commands</span>
+          <span className="font-mono text-[10px] opacity-60">Ctrl+Shift+P</span>
+        </button>
         
-        <div className="flex items-center space-x-1 ml-2">
+        {/* SEAM Autonomous Controls */}
+        <div className="flex items-center space-x-1 ml-2 border-l border-border/60 pl-2">
           <button 
             onClick={() => triggerExecution(true)}
-            className="p-1.5 rounded hover:bg-secondary text-secondaryText hover:text-success transition-colors group" 
-            title="Run Project / Resume Workflow"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-emerald-950/60 border border-emerald-800/40 text-emerald-400 hover:bg-emerald-900/60 transition-colors text-xs font-medium" 
+            title="Run Autonomous Lifecycle"
           >
-            <Play className="w-4 h-4" />
+            <Play className="w-3.5 h-3.5" />
+            <span className="hidden md:inline">Run</span>
           </button>
-          <button className="p-1.5 rounded hover:bg-secondary text-secondaryText hover:text-warning transition-colors" title="Debug">
+          <button 
+            onClick={() => triggerExecution(true)}
+            className="p-1.5 rounded hover:bg-secondary text-secondaryText hover:text-warning transition-colors" 
+            title="Resume / Retry Run"
+          >
             <Bug className="w-4 h-4" />
           </button>
         </div>

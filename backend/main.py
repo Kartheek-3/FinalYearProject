@@ -482,6 +482,42 @@ def create_app(registry: ModelClientRegistry | None = None) -> FastAPI:
         except Exception as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
+    @app.get("/projects/{project_id}/search")
+    async def search_project_files(
+        project_id: str,
+        q: str,
+        case_sensitive: bool = False,
+        current_user: AuthenticatedUser = Depends(get_current_user),
+    ) -> list[dict]:
+        """Search text across all files within project sandbox."""
+        aggregate = await verify_project_access(project_id, current_user)
+        if not q or not q.strip():
+            return []
+        query_str = q if case_sensitive else q.lower()
+        workspace = lifecycle._provisioner.open(aggregate.workspace)
+        all_paths = workspace.inspect_structure()
+        results = []
+        for rel_path in all_paths:
+            try:
+                # Read file safely
+                content = workspace.read_file(rel_path).content
+                lines = content.splitlines()
+                for idx, line in enumerate(lines):
+                    target_line = line if case_sensitive else line.lower()
+                    if query_str in target_line:
+                        results.append({
+                            "path": rel_path,
+                            "line_number": idx + 1,
+                            "line_content": line.strip()[:180],
+                        })
+                        if len(results) >= 200:
+                            break
+            except Exception:
+                continue
+            if len(results) >= 200:
+                break
+        return results
+
     from backend.memory import get_memory_manager
 
     @app.get("/memory/stats")
